@@ -1,0 +1,179 @@
+# Сборочные команды проекта: https://taskfile.dev
+# Установка: go install github.com/go-task/task/v3/cmd/task@latest
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  BIN: bin/lexi-bot
+  COVERAGE: coverage.out
+  # Миграциями управляет собственная команда: goose подключён библиотекой,
+  # его CLI притащил бы драйверы sqlite и clickhouse, которые проекту не нужны.
+  MIGRATE: go run ./cmd/migrate
+  # golangci-lint не добавлен в go.mod намеренно: его дерево зависимостей больше,
+  # чем всё остальное приложение. Версия закреплена здесь и в CI.
+  LINT_VERSION: v2.12.2
+
+tasks:
+  default:
+    desc: Список задач
+    cmds:
+      - task --list
+    silent: true
+
+  # ---------- окружение ----------
+
+  up:
+    desc: Поднять Postgres и дождаться готовности
+    cmds:
+      - docker compose up -d --wait postgres
+    status:
+      # В CI базу поднимает сервис-контейнер GitHub Actions, docker compose там не нужен.
+      - test -n "$CI"
+
+  down:
+    desc: Остановить контейнеры (данные сохраняются)
+    cmds:
+      - docker compose down
+
+  clean:
+    desc: Остановить контейнеры и удалить данные базы
+    prompt: Это удалит все локальные данные базы. Продолжить?
+    cmds:
+      - docker compose down -v
+
+  logs:
+    desc: Логи Postgres
+    cmds:
+      - docker compose logs -f postgres
+
+  psql:
+    desc: Консоль psql к базе разработки
+    interactive: true
+    cmds:
+      - docker compose exec postgres psql -U lexi -d lexi
+
+  # ---------- миграции ----------
+
+  migrate:
+    desc: Накатить миграции на базу разработки
+    deps: [up]
+    cmds:
+      - "{{.MIGRATE}} up"
+
+  migrate:down:
+    desc: Откатить последнюю миграцию
+    cmds:
+      - "{{.MIGRATE}} down"
+
+  migrate:status:
+    desc: Статус миграций
+    cmds:
+      - "{{.MIGRATE}} status"
+
+  migrate:new:
+    desc: 'Создать файл миграции: task migrate:new -- add_users_table'
+    cmds:
+      - |
+        name='{{.CLI_ARGS}}'
+        if [ -z "$name" ]; then
+          echo "укажите имя: task migrate:new -- add_users_table" >&2
+          exit 1
+        fi
+        last=$(ls migrations/[0-9]*.sql 2>/dev/null | sed 's|.*/||; s/_.*//' | sort -n | tail -1)
+        next=$(printf '%05d' $(( 10#${last:-0} + 1 )))
+        file="migrations/${next}_${name}.sql"
+        printf -- '-- +goose Up\n\n\n-- +goose Down\n\n' > "$file"
+        echo "создан $file"
+
+  # ---------- разработка ----------
+
+  run:
+    desc: Запустить бота
+    deps: [up]
+    cmds:
+      - go run ./cmd/bot
+
+  build:
+    desc: Собрать бинарник в bin/
+    cmds:
+      - go build -trimpath -ldflags="-s -w" -o {{.BIN}} ./cmd/bot
+
+  seed:
+    desc: Загрузить встроенные словари
+    cmds:
+      - go run ./cmd/seeder
+
+  fmt:
+    desc: Отформатировать код
+    cmds:
+      - gofmt -w .
+      - go mod tidy
+
+  # ---------- проверки ----------
+
+  tools:
+    desc: Установить инструменты разработки (golangci-lint)
+    cmds:
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.LINT_VERSION}}
+    status:
+      - command -v golangci-lint
+
+  lint:
+    desc: Запустить golangci-lint
+    deps: [tools]
+    cmds:
+      - golangci-lint run ./...
+
+  vet:
+    desc: go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Юнит-тесты (Docker не нужен)
+    cmds:
+      - go test -race ./...
+
+  test:integration:
+    desc: Интеграционные тесты (нужен Postgres)
+    deps: [up]
+    cmds:
+      - go test -race -tags=integration ./...
+
+  test:cover:
+    desc: Тесты с отчётом о покрытии
+    cmds:
+      - go test -race -covermode=atomic -coverprofile={{.COVERAGE}} ./...
+      - go tool cover -func={{.COVERAGE}} | tail -n 1
+
+  cover:html:
+    desc: Открыть отчёт о покрытии в браузере
+    deps: [test:cover]
+    cmds:
+      - go tool cover -html={{.COVERAGE}}
+
+  vuln:
+    desc: Проверка зависимостей на известные уязвимости
+    cmds:
+      - go tool govulncheck ./...
+
+  ci:
+    desc: Всё, что прогоняет GitHub Actions
+    cmds:
+      - task: fmt:check
+      - task: lint
+      - task: test
+      - task: test:integration
+      - task: vuln
+
+  fmt:check:
+    desc: Проверить форматирование без изменения файлов
+    cmds:
+      - |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "Не отформатировано (запустите task fmt):"
+          echo "$unformatted"
+          exit 1
+        fi

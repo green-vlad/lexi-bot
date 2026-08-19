@@ -1,0 +1,22 @@
+# Секреты и локальное окружение
+.env
+.env.local
+
+# Сборка
+/bin/
+/dist/
+lexi-bot
+
+# Тесты
+coverage.out
+coverage.html
+
+# Инструменты и редакторы
+/.task/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Локальные настройки Claude Code
+.claude/settings.local.json

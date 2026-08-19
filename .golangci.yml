@@ -1,0 +1,74 @@
+# Конфигурация golangci-lint v2. Версия линтера закреплена в Taskfile.yml
+# и в .github/workflows/ci.yml — они должны совпадать.
+version: "2"
+
+run:
+  timeout: 5m
+  # Тесты под тегом integration тоже должны проверяться линтером.
+  build-tags:
+    - integration
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose      # незакрытые тела HTTP-ответов
+    - errorlint      # сравнение ошибок без errors.Is/As
+    - gocritic
+    - gosec
+    - nilerr         # return nil при ненулевой ошибке
+    - noctx          # запросы без context
+    - revive
+    - rowserrcheck   # незамеченная ошибка при обходе rows
+    - sqlclosecheck  # незакрытые rows и stmt
+    - unconvert
+    - wastedassign
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    # Анализатор shadow намеренно не включён: он ругается на идиоматичное
+    # `if err := f(); err != nil` внутри функции, где err уже объявлена, —
+    # шума от него больше, чем пользы.
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        # Слишком шумно на осмысленных if/else, где ветки равнозначны.
+        - ifElseChain
+    revive:
+      rules:
+        - name: exported
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: indent-error-flow
+        - name: var-naming
+        - name: unreachable-code
+    gosec:
+      excludes:
+        # G115: конверсии int64 -> int в работе с Telegram ID безопасны по контексту.
+        - G115
+
+  exclusions:
+    generated: lax
+    rules:
+      # В тестах допустимы непроверенные ошибки вспомогательных вызовов
+      # и слабый источник случайности.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - noctx
+      # Комментарии к экспортируемым сущностям обязательны в домене и в портах,
+      # но требовать их от команд (package main) излишне.
+      - path: ^cmd/
+        linters:
+          - revive
+        text: "exported"
+
+formatters:
+  enable:
+    - gofmt

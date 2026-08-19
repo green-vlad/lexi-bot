@@ -1,0 +1,27 @@
+# Локальное окружение для разработки.
+# Прод описан отдельно в docker-compose.prod.yml (задача T-051).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lexi-postgres
+    environment:
+      POSTGRES_USER: lexi
+      POSTGRES_PASSWORD: lexi
+      POSTGRES_DB: lexi
+      # Ускоряет создание базы, для локальной разработки безопасно.
+      POSTGRES_INITDB_ARGS: "--no-sync"
+    ports:
+      # Наружу открыт только в разработке: сюда ходят psql, goose и тесты.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexi -d lexi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Патч- и минорные обновления приходят одним PR: разбирать их поштучно
+      # не нужно, а CI всё равно проверяет их вместе.
+      go-dependencies:
+        update-types: [minor, patch]
+
+  # Устаревшие action'ы — типовая причина внезапно красного пайплайна,
+  # поэтому следим за ними так же, как за зависимостями кода.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly

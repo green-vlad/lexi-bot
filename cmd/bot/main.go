@@ -13,6 +13,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// База таймзон IANA встраивается в бинарник: образ собирается на distroless,
+	// где системного tzdata нет, а сутки пользователя считаются по его зоне.
+	_ "time/tzdata"
 
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"

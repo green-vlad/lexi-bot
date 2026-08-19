@@ -44,7 +44,7 @@
   `Language` (валидация BCP-47), `Lexeme`, `Translation`, `Deck`, `DeckItem`. Конструкторы с валидацией (пустой `term` недопустим, `lang_code` обязателен).
   **DoD:** таблично протестированы конструкторы и ошибки валидации; пакет не импортирует ничего из проекта.
 
-- [ ] **T-007. `domain/user`** ∥
+- [x] **T-007. `domain/user`** ∥
   `User`, `UILang`, `Timezone` (обёртка над `*time.Location`), `Settings` с границами (`new_per_day` 1..100, `max_reviews_per_day` 10..500). Метод `Settings.DayStart(t time.Time) time.Time` — начало суток пользователя.
   **DoD:** тесты на границы, на переход через полночь и на смену таймзоны.
 

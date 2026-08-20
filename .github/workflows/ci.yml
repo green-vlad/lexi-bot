@@ -42,7 +42,7 @@ jobs:
 
       # Собственный action используется вместо `task lint`: он кеширует
       # и бинарник линтера, и результаты анализа.
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: ${{ env.LINT_VERSION }}
 

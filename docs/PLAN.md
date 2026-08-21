@@ -187,12 +187,16 @@ users ──< user_courses ──< cards ┘──< reviews
 **`deck_items`** — `deck_id`, `lexeme_id`, `position` (порядок выдачи; для встроенных = по
 частотности). PK `(deck_id, lexeme_id)`, индекс `(deck_id, position)`.
 
-**`users`** — `id`, `tg_user_id` (UNIQUE), `tg_username`, `ui_lang`, `timezone` (IANA),
+**`users`** — `id`, `tg_user_id` (UNIQUE), `tg_username`, `ui_lang`,
 `created_at`, `deleted_at`.
 
 **`user_settings`** — `user_id` (PK), `new_per_day`, `max_reviews_per_day`, `reminder_at`
-(local time, nullable = выключено), `quiz_modes` (массив включённых режимов),
-`reverse_direction` (перевод→слово).
+(local time, nullable = выключено), `timezone` (IANA), `quiz_modes` (массив включённых
+режимов), `reverse_direction` (перевод→слово).
+
+Таймзона лежит рядом с дневными лимитами, а не в `users`, потому что нужна ровно им:
+она задаёт границу суток, по которой лимиты обнуляются. В домене она по той же причине
+живёт в `user.Settings`, и схема повторяет это один в один.
 
 **`user_courses`** — «пользователь учит колоду X с переводом на язык Y».
 `id`, `user_id`, `deck_id`, `translation_lang`, `status` (active/paused/archived), `created_at`.

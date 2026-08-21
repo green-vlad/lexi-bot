@@ -51,6 +51,17 @@ func (b base) db(ctx context.Context) queryer {
 	return b.pool
 }
 
+// inTx выполняет fn в транзакции: в уже открытой, если она есть в контексте,
+// иначе в собственной. Нужен там, где одного запроса мало, а сценарий может
+// и не открывать транзакцию сам — например, при добавлении слов в колоду,
+// после которого пересчитывается её размер.
+func (b base) inTx(ctx context.Context, fn func(q queryer) error) error {
+	if tx := txFromContext(ctx); tx != nil {
+		return fn(tx)
+	}
+	return pgx.BeginFunc(ctx, b.pool, func(tx pgx.Tx) error { return fn(tx) })
+}
+
 // wrap переводит ошибку драйвера в ошибку приложения, добавляя к ней
 // описание операции: «сохранить настройки: запись не найдена» читается
 // в логе куда лучше, чем голое no rows in result set.

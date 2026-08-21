@@ -40,6 +40,10 @@ const (
 	setupTimeout   = 60 * time.Second
 )
 
+// lockID — произвольное, но постоянное число, которым тестовые процессы
+// договариваются об очереди на базу. Подробности — в takeDatabase.
+const lockID int64 = 8150724
+
 // Таблицы, которые чистить нельзя: служебная таблица goose и справочник
 // языков, заполненный самой миграцией.
 var keepTables = map[string]bool{
@@ -56,6 +60,10 @@ var (
 type database struct {
 	pool   *pgxpool.Pool
 	tables []string
+	// lock удерживает консультативную блокировку всё время жизни процесса.
+	// Соединение не возвращается в пул намеренно: блокировка живёт ровно
+	// столько, сколько живёт соединение.
+	lock *pgxpool.Conn
 }
 
 // New возвращает пул к чистой базе: перед каждым тестом данные предыдущего
@@ -95,12 +103,42 @@ func setup() (*database, error) {
 		return nil, err
 	}
 
+	lock, err := takeDatabase(ctx, pool)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+
 	tables, err := listTables(ctx, pool)
 	if err != nil {
 		pool.Close()
 		return nil, err
 	}
-	return &database{pool: pool, tables: tables}, nil
+	return &database{pool: pool, tables: tables, lock: lock}, nil
+}
+
+// takeDatabase занимает базу до конца работы процесса.
+//
+// go test запускает пакеты параллельно, и при общей базе (а это путь CI
+// с TEST_DATABASE_URL) два процесса чистят её друг у друга под ногами:
+// тест видит чужие строки или теряет свои посреди прогона. Консультативная
+// блокировка выстраивает процессы в очередь — каждый работает с базой один.
+//
+// Блокировка снимается сама при закрытии соединения, то есть при завершении
+// процесса, в том числе аварийном: убирать за собой не нужно.
+//
+// При запуске в контейнере (без TEST_DATABASE_URL) база у каждого процесса
+// своя, и блокировка ничего не стоит — она берётся сразу.
+func takeDatabase(ctx context.Context, pool *pgxpool.Pool) (*pgxpool.Conn, error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("занять соединение для блокировки: %w", err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("дождаться очереди на тестовую базу: %w", err)
+	}
+	return conn, nil
 }
 
 // resolveDSN возвращает строку подключения к тестовой базе, поднимая

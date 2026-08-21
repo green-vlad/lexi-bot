@@ -80,7 +80,7 @@
   `usecase/port`: интерфейсы `UserRepo`, `SettingsRepo`, `LexemeRepo`, `DeckRepo`, `CourseRepo`, `CardRepo`, `ReviewRepo`, `CounterRepo`, `SessionRepo`, `ImportRepo`, плюс `Clock`, `Rand`, `TxManager`.
   **DoD:** интерфейсы объявлены на стороне потребителя (в `usecase`), сигнатуры принимают `context.Context`.
 
-- [ ] **T-015. Репозитории пользователя** ∥
+- [x] **T-015. Репозитории пользователя** ∥
   `UserRepo` (upsert по `tg_user_id`, мягкое удаление), `SettingsRepo`.
   **DoD:** интеграционные тесты: создание, повторный `/start` не плодит пользователя, обновление настроек, каскад при удалении.
 

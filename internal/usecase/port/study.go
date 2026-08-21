@@ -91,16 +91,42 @@ type CardRepo interface {
 	CountsByState(ctx context.Context, courseID study.CourseID) (map[study.State]int, error)
 }
 
-// ReviewRepo пишет журнал повторений.
+// ReviewStats — сводка по журналу за период.
+type ReviewStats struct {
+	Total   int
+	Correct int
+}
+
+// Accuracy — доля верных ответов от нуля до единицы. У пустой сводки ноль:
+// показывать «100% точности» тому, кто не ответил ни разу, было бы обманом.
+func (s ReviewStats) Accuracy() float64 {
+	if s.Total == 0 {
+		return 0
+	}
+	return float64(s.Correct) / float64(s.Total)
+}
+
+// ReviewRepo пишет журнал повторений и считает по нему сводки.
 //
-// Журнал только пополняется: правок и удалений в нём нет, и метода для них
-// здесь тоже нет. Агрегаты для статистики появятся отдельными методами
-// в T-045 — придумывать их форму заранее не из чего.
+// Журнал только пополняется: правок и удалений в нём нет, и методов для них
+// здесь тоже нет.
 type ReviewRepo interface {
 	// Add добавляет запись. Обычный путь ответа идёт через CardRepo.Apply,
 	// где журнал пишется вместе с карточкой; этот метод — для случаев,
 	// когда состояние карточки не меняется.
-	Add(ctx context.Context, userID user.ID, review study.Review) error
+	//
+	// Указатель — чтобы не копировать запись журнала на каждый ответ;
+	// реализация её не меняет.
+	Add(ctx context.Context, userID user.ID, review *study.Review) error
+
+	// Stats считает ответы пользователя начиная с момента since.
+	Stats(ctx context.Context, userID user.ID, since time.Time) (ReviewStats, error)
+
+	// ActiveDays возвращает календарные дни, в которые пользователь отвечал,
+	// от свежего к старому. Дни считаются в его таймзоне: серия занятий
+	// не должна прерываться из-за того, что вечерний ответ пришёлся
+	// на следующие сутки UTC.
+	ActiveDays(ctx context.Context, userID user.ID, tz user.Timezone, since time.Time) ([]time.Time, error)
 }
 
 // DailyCounter — дневные счётчики курса.

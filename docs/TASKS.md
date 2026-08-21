@@ -48,7 +48,7 @@
   `User`, `UILang`, `Timezone` (обёртка над `*time.Location`), `Settings` с границами (`new_per_day` 1..100, `max_reviews_per_day` 10..500). Метод `Settings.DayStart(t time.Time) time.Time` — начало суток пользователя.
   **DoD:** тесты на границы, на переход через полночь и на смену таймзоны.
 
-- [ ] **T-008. `domain/study`: типы**
+- [x] **T-008. `domain/study`: типы**
   `Rating` (Again/Hard/Good/Easy), `State` (New/Learning/Review/Relearning/Suspended), `CardState`, `Card`, `Review`, интерфейс `Scheduler`.
   **DoD:** `String()` и разбор из строки для `Rating`/`State` протестированы в обе стороны.
 

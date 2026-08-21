@@ -3,6 +3,8 @@ package user
 import (
 	"fmt"
 	"time"
+
+	"lexi-bot/internal/domain/study"
 )
 
 // Границы настроек. Верхние пределы защищают пользователя от самого себя:
@@ -42,6 +44,9 @@ type Settings struct {
 	Timezone Timezone
 	// ReverseDirection меняет направление проверки на «перевод → слово».
 	ReverseDirection bool
+	// QuizModes — включённые режимы проверки. Пустым быть не может: иначе
+	// карточку нечем показать. Хранится в каноничном порядке без повторов.
+	QuizModes []study.Mode
 }
 
 // DefaultSettings возвращает настройки нового пользователя в заданной таймзоне.
@@ -51,6 +56,7 @@ func DefaultSettings(tz Timezone) Settings {
 		NewPerDay:        DefaultNewPerDay,
 		MaxReviewsPerDay: DefaultReviewsPerDay,
 		Timezone:         tz,
+		QuizModes:        study.Modes(),
 	}
 }
 
@@ -67,7 +73,53 @@ func (s Settings) Validate() error {
 	if s.Timezone.IsZero() {
 		return fmt.Errorf("timezone: %w", ErrRequired)
 	}
+	if len(s.QuizModes) == 0 {
+		return fmt.Errorf("quiz_modes: %w (нужен хотя бы один режим проверки)", ErrRequired)
+	}
+	for _, mode := range s.QuizModes {
+		if !mode.IsValid() {
+			return fmt.Errorf("quiz_modes: %w (неизвестный режим %q)", ErrInvalid, mode)
+		}
+	}
 	return nil
+}
+
+// WithQuizModes возвращает копию настроек с другим набором режимов проверки.
+// Набор приводится к каноничному порядку без повторов, поэтому «typing, typing,
+// recall» и «recall, typing» дают одни и те же настройки.
+func (s Settings) WithQuizModes(modes []study.Mode) (Settings, error) {
+	canonical := make([]study.Mode, 0, len(modes))
+	for _, known := range study.Modes() {
+		for _, mode := range modes {
+			if mode == known {
+				canonical = append(canonical, known)
+				break
+			}
+		}
+	}
+	// Неизвестные режимы канонизация молча выбросила бы, поэтому проверяем
+	// исходный набор: опечатка в коде или в базе должна быть видна.
+	for _, mode := range modes {
+		if !mode.IsValid() {
+			return Settings{}, fmt.Errorf("quiz_modes: %w (неизвестный режим %q)", ErrInvalid, mode)
+		}
+	}
+
+	s.QuizModes = canonical
+	if err := s.Validate(); err != nil {
+		return Settings{}, err
+	}
+	return s, nil
+}
+
+// ModeEnabled сообщает, что режим проверки включён пользователем.
+func (s Settings) ModeEnabled(mode study.Mode) bool {
+	for _, enabled := range s.QuizModes {
+		if enabled == mode {
+			return true
+		}
+	}
+	return false
 }
 
 // WithNewPerDay возвращает копию настроек с новым дневным лимитом новых слов.

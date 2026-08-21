@@ -134,6 +134,16 @@ func takeDatabase(ctx context.Context, pool *pgxpool.Pool) (*pgxpool.Conn, error
 	if err != nil {
 		return nil, fmt.Errorf("занять соединение для блокировки: %w", err)
 	}
+
+	// Ожидание блокировки — это выполняющийся запрос, и statement_timeout
+	// из настроек пула (пять секунд) обрывает его вместе с очередью. Пока
+	// пакеты укладывались в пять секунд, это было незаметно; первый же
+	// пакет подлиннее сломал бы прогон. На этом соединении ограничение
+	// снимается — ждать сколько нужно позволяет контекст с setupTimeout.
+	if _, err := conn.Exec(ctx, "SET statement_timeout = 0"); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("снять ограничение на время ожидания: %w", err)
+	}
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID); err != nil {
 		conn.Release()
 		return nil, fmt.Errorf("дождаться очереди на тестовую базу: %w", err)

@@ -12,6 +12,7 @@ var (
 	langKO = lexicon.MustParseLanguage("ko")
 	langRU = lexicon.MustParseLanguage("ru")
 	langEN = lexicon.MustParseLanguage("en")
+	langES = lexicon.MustParseLanguage("es")
 )
 
 func TestNewLexemeNormalizes(t *testing.T) {

@@ -52,7 +52,7 @@
   `Rating` (Again/Hard/Good/Easy), `State` (New/Learning/Review/Relearning/Suspended), `CardState`, `Card`, `Review`, интерфейс `Scheduler`.
   **DoD:** `String()` и разбор из строки для `Rating`/`State` протестированы в обе стороны.
 
-- [ ] **T-009. Алгоритм SM-2** ⭐
+- [x] **T-009. Алгоритм SM-2** ⭐
   Реализация `Scheduler`: learning-шаги (1 мин, 10 мин), graduating interval 1 д, easy interval 4 д, EF по формуле SM-2 с полом 1.3, обработка провала (Relearning, `lapses++`, интервал × 0.5), небольшой джиттер интервала через инжектируемый `Rand`.
   **DoD:** табличные тесты на каждый переход состояний; эталонная последовательность из 10 повторений даёт зафиксированные в тесте интервалы; `Next` не обращается к `time.Now()`; покрытие пакета ≥ 95%.
 

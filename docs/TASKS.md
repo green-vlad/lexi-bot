@@ -76,7 +76,7 @@
   `infra/postgres`: `pgxpool` с таймаутами и `Ping`. `test/pgtest`: если задан `TEST_DATABASE_URL` — использовать эту БД (так работает CI с сервис-контейнером), иначе поднять `testcontainers-go` (так работает локально); накат миграций, очистка между тестами.
   **DoD:** пример интеграционного теста под тегом `integration` проходит и локально без переменной, и в CI с ней; `task test` (без тега) не требует Docker.
 
-- [ ] **T-014. Порты репозиториев**
+- [x] **T-014. Порты репозиториев**
   `usecase/port`: интерфейсы `UserRepo`, `SettingsRepo`, `LexemeRepo`, `DeckRepo`, `CourseRepo`, `CardRepo`, `ReviewRepo`, `CounterRepo`, `SessionRepo`, `ImportRepo`, плюс `Clock`, `Rand`, `TxManager`.
   **DoD:** интерфейсы объявлены на стороне потребителя (в `usecase`), сигнатуры принимают `context.Context`.
 

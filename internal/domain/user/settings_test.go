@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 )
 
@@ -52,6 +53,7 @@ func TestSettingsBounds(t *testing.T) {
 				NewPerDay:        tt.newPer,
 				MaxReviewsPerDay: tt.reviews,
 				Timezone:         user.UTCTimezone(),
+				QuizModes:        study.Modes(),
 			}
 			err := s.Validate()
 			if tt.wantErr {
@@ -70,7 +72,7 @@ func TestSettingsBounds(t *testing.T) {
 func TestSettingsRequireTimezone(t *testing.T) {
 	t.Parallel()
 
-	s := user.Settings{NewPerDay: 10, MaxReviewsPerDay: 100}
+	s := user.Settings{NewPerDay: 10, MaxReviewsPerDay: 100, QuizModes: study.Modes()}
 	if err := s.Validate(); !errors.Is(err, user.ErrRequired) {
 		t.Fatalf("Validate() = %v, ожидалась ошибка ErrRequired", err)
 	}
@@ -196,5 +198,57 @@ func TestSettingsReminderAcrossDSTShift(t *testing.T) {
 	}
 	if got := next.Sub(time.Date(2026, 3, 7, 21, 30, 0, 0, loc)); got != 23*time.Hour {
 		t.Errorf("интервал между напоминаниями = %v, ожидалось 23h (сутки перехода короче)", got)
+	}
+}
+
+func TestSettingsQuizModes(t *testing.T) {
+	t.Parallel()
+
+	base := user.DefaultSettings(user.UTCTimezone())
+	if len(base.QuizModes) != len(study.Modes()) {
+		t.Fatalf("по умолчанию включено %d режимов, ожидались все %d", len(base.QuizModes), len(study.Modes()))
+	}
+	for _, mode := range study.Modes() {
+		if !base.ModeEnabled(mode) {
+			t.Errorf("режим %q не включён по умолчанию", mode)
+		}
+	}
+
+	// Набор приводится к каноничному порядку и теряет повторы.
+	updated, err := base.WithQuizModes([]study.Mode{study.ModeTyping, study.ModeRecall, study.ModeTyping})
+	if err != nil {
+		t.Fatalf("WithQuizModes() вернул ошибку: %v", err)
+	}
+	want := []study.Mode{study.ModeRecall, study.ModeTyping}
+	if len(updated.QuizModes) != len(want) {
+		t.Fatalf("QuizModes = %v, ожидалось %v", updated.QuizModes, want)
+	}
+	for i, mode := range want {
+		if updated.QuizModes[i] != mode {
+			t.Errorf("QuizModes[%d] = %q, ожидалось %q", i, updated.QuizModes[i], mode)
+		}
+	}
+	if updated.ModeEnabled(study.ModeChoice) {
+		t.Error("режим choice не включался")
+	}
+}
+
+func TestSettingsQuizModesErrors(t *testing.T) {
+	t.Parallel()
+
+	base := user.DefaultSettings(user.UTCTimezone())
+
+	if _, err := base.WithQuizModes(nil); !errors.Is(err, user.ErrRequired) {
+		t.Errorf("пустой набор = %v, ожидалась ошибка ErrRequired", err)
+	}
+	// Неизвестный режим не должен молча выпасть при канонизации.
+	if _, err := base.WithQuizModes([]study.Mode{study.ModeRecall, study.Mode("dictation")}); !errors.Is(err, user.ErrInvalid) {
+		t.Errorf("неизвестный режим = %v, ожидалась ошибка ErrInvalid", err)
+	}
+
+	broken := user.DefaultSettings(user.UTCTimezone())
+	broken.QuizModes = []study.Mode{study.Mode("dictation")}
+	if err := broken.Validate(); !errors.Is(err, user.ErrInvalid) {
+		t.Errorf("Validate() = %v, ожидалась ошибка ErrInvalid", err)
 	}
 }

@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "/learn — study\n/add — add your own word\n/decks — my courses\n/stats — statistics\n/settings — settings"
+other = "Here is what I can do:\n\n/start — start learning\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (studying, your own words, statistics) is coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -86,3 +86,6 @@ other = "This button no longer works. Start over: /start"
 
 [common.friend]
 other = "friend"
+
+[language.choose]
+other = "Which language should I speak?"

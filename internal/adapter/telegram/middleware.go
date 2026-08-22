@@ -124,6 +124,29 @@ func kind(u *port.Update) string {
 	}
 }
 
+// AnswerCallbacks снимает «часики» с нажатой кнопки.
+//
+// Telegram ждёт ответа на каждое нажатие и крутит индикатор, пока его нет.
+// Отвечаем сразу, до обработки: сама обработка может сходить в базу
+// несколько раз, и всё это время кнопка выглядела бы зависшей. Ошибка
+// ответа только логируется — нажатие могло прийти от сообщения, которого
+// уже нет, и портить из-за этого обработку незачем.
+func AnswerCallbacks(messenger port.Messenger, log *slog.Logger) Middleware {
+	return func(next port.UpdateHandler) port.UpdateHandler {
+		return port.UpdateHandlerFunc(func(ctx context.Context, u *port.Update) error {
+			if u.Callback == nil {
+				return next.Handle(ctx, u)
+			}
+
+			if err := messenger.AnswerCallback(ctx, port.CallbackAnswer{ID: u.Callback.ID}); err != nil {
+				logger.FromContext(ctx, log).Warn("не удалось ответить на нажатие кнопки",
+					slog.Any("error", err))
+			}
+			return next.Handle(ctx, u)
+		})
+	}
+}
+
 // Identify находит пользователя, а незнакомого заводит.
 //
 // Регистрация происходит на любом апдейте, а не только на /start: человек

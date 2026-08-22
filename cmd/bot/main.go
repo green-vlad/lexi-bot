@@ -24,9 +24,11 @@ import (
 	// и адаптер репозиториев. Псевдоним разводит их по ролям.
 	storage "lexi-bot/internal/adapter/storage/postgres"
 	"lexi-bot/internal/adapter/telegram"
+	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
+	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/locales"
 )
@@ -85,8 +87,13 @@ func run() error {
 		return err
 	}
 
+	handler, err := router(transport, catalog, pool, &cfg, log)
+	if err != nil {
+		return err
+	}
+
 	log.Info("бот запущен")
-	if err := transport.Run(ctx, router(transport, catalog, pool, log)); err != nil {
+	if err := transport.Run(ctx, handler); err != nil {
 		return err
 	}
 
@@ -101,21 +108,49 @@ func run() error {
 // логирование, чтобы в лог попал и апдейт, обработка которого сорвалась
 // на определении пользователя. Затем определение пользователя, и только
 // после него локализация — язык интерфейса известен из его настроек.
-func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool, log *slog.Logger) port.UpdateHandler {
+func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool, cfg *config.Config, log *slog.Logger) (port.UpdateHandler, error) {
+	dialogs, err := telegram.NewDialogs(&telegram.DialogsConfig{
+		Sessions:  storage.NewSessionRepo(pool),
+		Messenger: transport,
+		Logger:    log,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	onboardingService, err := onboarding.New(onboarding.Deps{
+		Users:           storage.NewUserRepo(pool),
+		Settings:        storage.NewSettingsRepo(pool),
+		Decks:           storage.NewDeckRepo(pool),
+		Courses:         storage.NewCourseRepo(pool),
+		DefaultTimezone: user.NewTimezone(cfg.DefaultTimezone),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	start, err := telegram.NewOnboarding(onboardingService, dialogs, transport, catalog)
+	if err != nil {
+		return nil, err
+	}
+
 	r := telegram.NewRouter()
 	r.Use(
 		telegram.Recover(transport, catalog, log),
 		telegram.Logging(log),
+		telegram.AnswerCallbacks(transport, log),
 		telegram.Identify(storage.NewUserRepo(pool), log),
 		telegram.Localize(catalog),
+		dialogs.Middleware(),
 	)
 
-	// TODO(T-026 … T-034): здесь появятся онбординг, учебная сессия
+	// TODO(T-028 … T-034): здесь появятся справка, учебная сессия
 	// и остальные команды. Пока бот честно отвечает только на то,
 	// что действительно умеет.
+	start.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
-	return r
+	return r, nil
 }
 
 // migrate приводит схему базы к актуальной версии. Приложение делает это само

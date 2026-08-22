@@ -17,11 +17,18 @@ import (
 	// где системного tzdata нет, а сутки пользователя считаются по его зоне.
 	_ "time/tzdata"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"lexi-bot/internal/adapter/i18n"
+	// Пакетов с именем postgres два: инфраструктурный (пул и миграции)
+	// и адаптер репозиториев. Псевдоним разводит их по ролям.
+	storage "lexi-bot/internal/adapter/storage/postgres"
 	"lexi-bot/internal/adapter/telegram"
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
 	"lexi-bot/internal/usecase/port"
+	"lexi-bot/locales"
 )
 
 const migrationTimeout = 30 * time.Second
@@ -64,6 +71,11 @@ func run() error {
 	// начатая обработка апдейта имеет право дописать свою транзакцию.
 	defer pool.Close()
 
+	catalog, err := i18n.NewCatalog(locales.FS)
+	if err != nil {
+		return err
+	}
+
 	transport, err := telegram.New(telegram.Config{
 		Token:       cfg.BotToken,
 		PollTimeout: cfg.PollTimeout,
@@ -73,10 +85,8 @@ func run() error {
 		return err
 	}
 
-	// TODO(T-023): вместо временного обработчика здесь появится роутер
-	// с middleware, а за ним — сценарии.
 	log.Info("бот запущен")
-	if err := transport.Run(ctx, ping(transport, log)); err != nil {
+	if err := transport.Run(ctx, router(transport, catalog, pool, log)); err != nil {
 		return err
 	}
 
@@ -84,21 +94,28 @@ func run() error {
 	return nil
 }
 
-// ping — временный обработчик до появления роутера (T-023). Он отвечает
-// на /ping и молчит на всё остальное: этого достаточно, чтобы убедиться,
-// что транспорт живой, и честнее, чем притворяться работающим ботом.
-func ping(messenger port.Messenger, log *slog.Logger) port.UpdateHandler {
-	return port.UpdateHandlerFunc(func(ctx context.Context, u *port.Update) error {
-		if u.Command != "ping" {
-			return nil
-		}
+// router собирает маршруты и общий для них конвейер middleware.
+//
+// Порядок middleware существенен. Снаружи — восстановление после паники:
+// оно обязано поймать в том числе панику в остальных middleware. Дальше
+// логирование, чтобы в лог попал и апдейт, обработка которого сорвалась
+// на определении пользователя. Затем определение пользователя, и только
+// после него локализация — язык интерфейса известен из его настроек.
+func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool, log *slog.Logger) port.UpdateHandler {
+	r := telegram.NewRouter()
+	r.Use(
+		telegram.Recover(transport, catalog, log),
+		telegram.Logging(log),
+		telegram.Identify(storage.NewUserRepo(pool), log),
+		telegram.Localize(catalog),
+	)
 
-		if _, err := messenger.SendMessage(ctx, port.OutgoingMessage{ChatID: u.Chat, Text: "pong"}); err != nil {
-			return err
-		}
-		log.Info("ответили pong", slog.Int64("chat_id", int64(u.Chat)))
-		return nil
-	})
+	// TODO(T-026 … T-034): здесь появятся онбординг, учебная сессия
+	// и остальные команды. Пока бот честно отвечает только на то,
+	// что действительно умеет.
+	r.Command("ping", telegram.Ping(transport))
+	r.Unknown(telegram.UnknownCommand(transport))
+	return r
 }
 
 // migrate приводит схему базы к актуальной версии. Приложение делает это само

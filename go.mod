@@ -8,6 +8,7 @@ tool golang.org/x/vuln/cmd/govulncheck
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/go-telegram/bot v1.23.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pressly/goose/v3 v3.27.3
@@ -35,7 +36,6 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-telegram/bot v1.23.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

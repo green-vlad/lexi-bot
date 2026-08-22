@@ -258,3 +258,83 @@ func TestDeckAddItemsIsAtomic(t *testing.T) {
 		t.Errorf("Size = %d, ожидался ноль", saved.Size)
 	}
 }
+
+func TestDeckLanguages(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewDeckRepo(pool)
+
+	korean := builtinDeck(t, pool, "ko-top-2000", langKO)
+	english := builtinDeck(t, pool, "en-top-1000", langEN)
+	builtinDeck(t, pool, "es-top-500", langES) // колода без слов
+
+	lexemes := saveLexemes(t, pool, newLexeme(t, "집"), newLexeme(t, "개"))
+	if err := repo.AddItems(ctx, []lexicon.DeckItem{
+		{DeckID: korean, LexemeID: lexemes[0].ID, Position: 0},
+		{DeckID: english, LexemeID: lexemes[1].ID, Position: 0},
+	}); err != nil {
+		t.Fatalf("AddItems() вернул ошибку: %v", err)
+	}
+
+	langs, err := repo.Languages(ctx)
+	if err != nil {
+		t.Fatalf("Languages() вернул ошибку: %v", err)
+	}
+
+	// Пустая колода в список не попадает: предлагать язык, учить который
+	// пока нечем, значит завести пользователю курс из ничего.
+	if len(langs) != 2 {
+		t.Fatalf("языков %d (%v), ожидалось два: пустая колода не в счёт", len(langs), langs)
+	}
+	if langs[0] != langEN || langs[1] != langKO {
+		t.Errorf("языки = %v, ожидались en и ko по алфавиту", langs)
+	}
+}
+
+func TestDeckTranslationLanguages(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewDeckRepo(pool)
+	lexemeRepo := postgres.NewLexemeRepo(pool)
+
+	deck := builtinDeck(t, pool, "ko-top-2000", langKO)
+	lexemes := saveLexemes(t, pool, newLexeme(t, "집"), newLexeme(t, "개"))
+	if err := repo.AddItems(ctx, []lexicon.DeckItem{
+		{DeckID: deck, LexemeID: lexemes[0].ID, Position: 0},
+		{DeckID: deck, LexemeID: lexemes[1].ID, Position: 1},
+	}); err != nil {
+		t.Fatalf("AddItems() вернул ошибку: %v", err)
+	}
+
+	// Первое слово переведено на русский и английский, второе только
+	// на русский: язык предлагается, если перевод есть хотя бы у одного.
+	err := lexemeRepo.SaveTranslations(ctx, []lexicon.Translation{
+		{LexemeID: lexemes[0].ID, Lang: langRU, Text: "дом", IsPrimary: true},
+		{LexemeID: lexemes[0].ID, Lang: langEN, Text: "house", IsPrimary: true},
+		{LexemeID: lexemes[1].ID, Lang: langRU, Text: "собака", IsPrimary: true},
+	})
+	if err != nil {
+		t.Fatalf("SaveTranslations() вернул ошибку: %v", err)
+	}
+
+	langs, err := repo.TranslationLanguages(ctx, deck)
+	if err != nil {
+		t.Fatalf("TranslationLanguages() вернул ошибку: %v", err)
+	}
+	if len(langs) != 2 {
+		t.Fatalf("языков перевода %d (%v), ожидалось два", len(langs), langs)
+	}
+	if langs[0] != langEN || langs[1] != langRU {
+		t.Errorf("языки = %v, ожидались en и ru по алфавиту", langs)
+	}
+
+	// У колоды без переводов выбирать нечего, и это не ошибка.
+	other := builtinDeck(t, pool, "en-top-1000", langEN)
+	langs, err = repo.TranslationLanguages(ctx, other)
+	if err != nil {
+		t.Fatalf("TranslationLanguages() вернул ошибку: %v", err)
+	}
+	if len(langs) != 0 {
+		t.Errorf("языки = %v, ожидался пустой список", langs)
+	}
+}

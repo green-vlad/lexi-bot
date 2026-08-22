@@ -34,6 +34,16 @@ type LexemeRepo interface {
 
 // DeckRepo хранит колоды и их состав.
 type DeckRepo interface {
+	// Languages возвращает языки, для которых есть встроенные колоды:
+	// из них состоит первый вопрос онбординга. Спрашивать по справочнику
+	// языков нельзя — там есть языки, учить которые пока нечем.
+	Languages(ctx context.Context) ([]lexicon.Language, error)
+
+	// TranslationLanguages возвращает языки, на которые переведены слова
+	// колоды. Предлагать язык, перевода на который нет, значило бы завести
+	// пользователю курс из пустых карточек.
+	TranslationLanguages(ctx context.Context, deckID lexicon.DeckID) ([]lexicon.Language, error)
+
 	// Builtin возвращает встроенные колоды языка изучения.
 	Builtin(ctx context.Context, lang lexicon.Language) ([]lexicon.Deck, error)
 

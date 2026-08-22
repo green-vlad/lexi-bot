@@ -19,6 +19,7 @@ var (
 	langKO = lexicon.MustParseLanguage("ko")
 	langRU = lexicon.MustParseLanguage("ru")
 	langEN = lexicon.MustParseLanguage("en")
+	langES = lexicon.MustParseLanguage("es")
 )
 
 func newLexeme(t *testing.T, term string, opts ...func(*lexicon.LexemeParams)) lexicon.Lexeme {

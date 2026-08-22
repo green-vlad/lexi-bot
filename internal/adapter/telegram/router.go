@@ -14,6 +14,7 @@ import (
 // (их больше всего в учебной сессии), потом команды, потом текст.
 type Router struct {
 	commands  map[string]port.UpdateHandler
+	actions   map[string]port.UpdateHandler
 	callback  port.UpdateHandler
 	text      port.UpdateHandler
 	unknown   port.UpdateHandler
@@ -24,7 +25,10 @@ var _ port.UpdateHandler = (*Router)(nil)
 
 // NewRouter создаёт пустой роутер.
 func NewRouter() *Router {
-	return &Router{commands: map[string]port.UpdateHandler{}}
+	return &Router{
+		commands: map[string]port.UpdateHandler{},
+		actions:  map[string]port.UpdateHandler{},
+	}
 }
 
 // Use добавляет middleware. Они оборачивают хендлеры в порядке добавления:
@@ -42,8 +46,17 @@ func (r *Router) Command(name string, handler port.UpdateHandler) {
 	r.commands[strings.ToLower(strings.TrimPrefix(name, "/"))] = handler
 }
 
-// Callback привязывает хендлер к нажатиям кнопок. Разбор callback_data
-// на действие и параметры — дело хендлера и кодека из T-025.
+// CallbackAction привязывает хендлер к кнопкам с указанным действием.
+//
+// Кнопок в боте много и принадлежат они разным частям: оценка карточки,
+// выбор колоды, смена языка. Разбирать действие в одном общем хендлере
+// значило бы собрать там switch по всему приложению.
+func (r *Router) CallbackAction(action string, handler port.UpdateHandler) {
+	r.actions[action] = handler
+}
+
+// Callback привязывает хендлер ко всем остальным нажатиям — тем, действие
+// которых не привязано отдельно.
 func (r *Router) Callback(handler port.UpdateHandler) { r.callback = handler }
 
 // Text привязывает хендлер к обычному тексту: ответы в режиме ввода
@@ -68,6 +81,14 @@ func (r *Router) Handle(ctx context.Context, u *port.Update) error {
 func (r *Router) route(u *port.Update) port.UpdateHandler {
 	switch {
 	case u.Callback != nil:
+		// Кнопка могла остаться от прошлой версии бота: разобрать её данные
+		// не получится, и это не повод падать — такие нажатия достаются
+		// общему хендлеру, если он есть.
+		if callback, ok := decodeCallback(u.Callback.Data); ok {
+			if handler, found := r.actions[callback.Action]; found {
+				return handler
+			}
+		}
 		return orNoop(r.callback)
 	case u.IsCommand():
 		if handler, ok := r.commands[u.Command]; ok {

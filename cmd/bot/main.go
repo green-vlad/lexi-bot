@@ -144,10 +144,16 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		dialogs.Middleware(),
 	)
 
-	// TODO(T-028 … T-034): здесь появятся справка, учебная сессия
-	// и остальные команды. Пока бот честно отвечает только на то,
-	// что действительно умеет.
+	language, err := telegram.NewLanguage(storage.NewUserRepo(pool), transport, catalog)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(T-029 … T-034): здесь появятся учебная сессия и остальные
+	// команды. Пока бот честно отвечает только на то, что умеет,
+	// и /help перечисляет ровно это.
 	start.Register(r)
+	language.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
 	return r, nil

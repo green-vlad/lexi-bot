@@ -105,9 +105,27 @@ func (f *fakeUsers) ByTelegramID(_ context.Context, tgID user.TelegramID) (user.
 func (f *fakeUsers) ByID(context.Context, user.ID) (user.User, error) {
 	return user.User{}, port.ErrNotFound
 }
-func (f *fakeUsers) SetUILang(context.Context, user.ID, user.UILang) error { return nil }
-func (f *fakeUsers) SoftDelete(context.Context, user.ID, time.Time) error  { return nil }
-func (f *fakeUsers) Purge(context.Context, user.ID) error                  { return nil }
+
+// SetUILang меняет язык у сохранённого пользователя: заглушка, которая
+// молча забывает запись, сделала бы тесты про смену языка бессмысленными.
+func (f *fakeUsers) SetUILang(_ context.Context, id user.ID, lang user.UILang) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.failWith != nil {
+		return f.failWith
+	}
+	for tgID, u := range f.byTgID {
+		if u.ID == id {
+			u.UILang = lang
+			f.byTgID[tgID] = u
+			return nil
+		}
+	}
+	return port.ErrNotFound
+}
+func (f *fakeUsers) SoftDelete(context.Context, user.ID, time.Time) error { return nil }
+func (f *fakeUsers) Purge(context.Context, user.ID) error                 { return nil }
 
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 1}))

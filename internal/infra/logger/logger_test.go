@@ -121,3 +121,28 @@ func TestFromContext(t *testing.T) {
 		})
 	}
 }
+
+func TestUserIdentifiersDoNotCollide(t *testing.T) {
+	t.Parallel()
+
+	// У пользователя два идентификатора: наш внутренний и телеграмный.
+	// Под одним ключом они делают лог неразбираемым — непонятно, о ком речь.
+	var buf bytes.Buffer
+	base := logger.New(&buf, slog.LevelInfo, logger.FormatJSON)
+
+	ctx := logger.WithTelegramID(context.Background(), 196732238)
+	ctx = logger.WithUserID(ctx, 1)
+
+	logger.FromContext(ctx, base).Info("проверка")
+
+	var entry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &entry); err != nil {
+		t.Fatalf("запись лога не разбирается: %v", err)
+	}
+	if entry["user_id"] != float64(1) {
+		t.Errorf("user_id = %v, ожидался внутренний идентификатор", entry["user_id"])
+	}
+	if entry["tg_user_id"] != float64(196732238) {
+		t.Errorf("tg_user_id = %v, ожидался идентификатор Telegram", entry["tg_user_id"])
+	}
+}

@@ -1,0 +1,49 @@
+# Interface translations, English.
+#
+# Format is go-i18n: a message with a count lists its plural forms
+# (one/other in English), a plain message needs only other. Placeholders are
+# named — {{.Name}} survives word-order changes, unlike %s.
+#
+# The set of keys and placeholders must match ru.toml; a test enforces that.
+
+[common.error]
+other = "Something went wrong. Please try again in a minute."
+
+[common.cancelled]
+other = "Cancelled."
+
+[common.unknown_command]
+other = "I don't know that command. See /help."
+
+[start.greeting]
+other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus reviews of what you've already seen."
+
+[start.choose_ui_lang]
+other = "Choose the interface language."
+
+[help.text]
+other = "/learn — study\n/add — add your own word\n/decks — my courses\n/stats — statistics\n/settings — settings"
+
+[language.changed]
+other = "Interface language switched to English."
+
+[cards.due]
+description = "How many cards are due"
+one = "{{.Count}} card is due"
+other = "{{.Count}} cards are due"
+
+[cards.new_today]
+description = "How many new words were introduced today"
+one = "{{.Count}} new word added today"
+other = "{{.Count}} new words added today"
+
+[session.finished]
+other = "That's all for today. Next review — {{.NextAt}}."
+
+[session.show_translation]
+other = "Show translation"
+
+[settings.new_per_day]
+description = "Current daily limit of new words"
+one = "Currently {{.Count}} new word per day"
+other = "Currently {{.Count}} new words per day"

@@ -40,13 +40,23 @@ type contextKey int
 
 const (
 	userIDKey contextKey = iota
+	telegramIDKey
 	updateIDKey
 )
 
-// WithUserID кладёт идентификатор пользователя в контекст, чтобы он попал
-// во все последующие записи, сделанные через FromContext.
+// WithUserID кладёт наш внутренний идентификатор пользователя в контекст,
+// чтобы он попал во все последующие записи, сделанные через FromContext.
+//
+// Идентификаторов у пользователя два, и путать их нельзя: по внутреннему
+// он ищется в нашей базе, по телеграмному — в переписке. Поэтому они живут
+// под разными ключами (см. WithTelegramID).
 func WithUserID(ctx context.Context, userID int64) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
+}
+
+// WithTelegramID кладёт идентификатор пользователя в Telegram.
+func WithTelegramID(ctx context.Context, telegramID int64) context.Context {
+	return context.WithValue(ctx, telegramIDKey, telegramID)
 }
 
 // WithUpdateID кладёт идентификатор апдейта Telegram в контекст: по нему
@@ -59,6 +69,9 @@ func WithUpdateID(ctx context.Context, updateID int64) context.Context {
 func FromContext(ctx context.Context, base *slog.Logger) *slog.Logger {
 	if userID, ok := ctx.Value(userIDKey).(int64); ok {
 		base = base.With(slog.Int64("user_id", userID))
+	}
+	if telegramID, ok := ctx.Value(telegramIDKey).(int64); ok {
+		base = base.With(slog.Int64("tg_user_id", telegramID))
 	}
 	if updateID, ok := ctx.Value(updateIDKey).(int64); ok {
 		base = base.With(slog.Int64("update_id", updateID))

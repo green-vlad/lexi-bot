@@ -84,7 +84,9 @@ func Logging(log *slog.Logger) Middleware {
 		return port.UpdateHandlerFunc(func(ctx context.Context, u *port.Update) error {
 			ctx = logger.WithUpdateID(ctx, u.ID)
 			if u.Sender.TelegramID != 0 {
-				ctx = logger.WithUserID(ctx, int64(u.Sender.TelegramID))
+				// Внутреннего идентификатора здесь ещё нет — его добавит
+				// Identify, когда найдёт пользователя в базе.
+				ctx = logger.WithTelegramID(ctx, int64(u.Sender.TelegramID))
 			}
 
 			started := time.Now()
@@ -157,10 +159,15 @@ func Identify(users port.UserRepo, log *slog.Logger) Middleware {
 				logger.FromContext(ctx, log).Info("зарегистрирован новый пользователь",
 					slog.Int64("user_id", int64(found.ID)),
 					slog.String("ui_lang", found.UILang.String()))
+
 			default:
 				return err
 			}
 
+			// Внутренний идентификатор попадает в контекст логгера: дальше
+			// его увидят и сценарии, и репозитории, которые про Telegram
+			// ничего не знают.
+			ctx = logger.WithUserID(ctx, int64(found.ID))
 			return next.Handle(withUser(ctx, found), u)
 		})
 	}

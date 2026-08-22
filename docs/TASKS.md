@@ -116,7 +116,7 @@
 
 ## M4 — Telegram: каркас и онбординг
 
-- [ ] **T-022. Транспорт**
+- [x] **T-022. Транспорт**
   Порт `Messenger` (`SendMessage`, `EditMessage`, `AnswerCallback`, `SendDocument`, `DownloadFile`), адаптер на `github.com/go-telegram/bot`, цикл long polling, graceful shutdown по сигналу.
   **DoD:** бот отвечает `pong` на `/ping` в реальном чате; по `SIGTERM` завершает обработку текущих апдейтов и закрывает пул.
 

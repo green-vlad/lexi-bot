@@ -8,6 +8,7 @@ tool golang.org/x/vuln/cmd/govulncheck
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/go-telegram/bot v1.23.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pressly/goose/v3 v3.27.3

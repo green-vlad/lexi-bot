@@ -53,3 +53,42 @@ one = "Сейчас {{.Count}} новое слово в день"
 few = "Сейчас {{.Count}} новых слова в день"
 many = "Сейчас {{.Count}} новых слов в день"
 other = "Сейчас {{.Count}} новых слова в день"
+
+[lang.ru]
+other = "Русский"
+
+[lang.en]
+other = "Английский"
+
+[lang.ko]
+other = "Корейский"
+
+[lang.es]
+other = "Испанский"
+
+[onboarding.choose_learning]
+other = "Какой язык учим?"
+
+[onboarding.choose_deck]
+other = "Какую колоду возьмём?"
+
+[onboarding.choose_translation]
+other = "На какой язык переводить?"
+
+[onboarding.back]
+other = "← Назад"
+
+[onboarding.done]
+other = "Готово: учим «{{.Deck}}» с переводом на {{.Language}}.\n\nПо {{.PerDay}} новых слов в день, напоминания выключены — всё это меняется в /settings.\nНачать: /learn"
+
+[onboarding.already_started]
+other = "Вы уже учите «{{.Deck}}». Продолжить: /learn\n\nЗавести ещё один курс можно в /decks."
+
+[onboarding.nothing_to_learn]
+other = "Словари ещё не загружены — учить пока нечего. Загляните попозже."
+
+[onboarding.expired]
+other = "Эта кнопка уже не работает. Начните заново: /start"
+
+[common.friend]
+other = "друг"

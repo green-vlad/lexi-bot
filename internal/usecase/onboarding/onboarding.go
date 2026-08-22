@@ -178,6 +178,35 @@ func (s *Service) Complete(ctx context.Context, choice Choice) (Result, error) {
 	}, nil
 }
 
+// CourseSummary — курс вместе с колодой: этого хватает, чтобы напомнить
+// вернувшемуся, что он учит.
+type CourseSummary struct {
+	Course study.Course
+	Deck   lexicon.Deck
+}
+
+// Courses возвращает курсы пользователя с их колодами.
+//
+// Колода запрашивается на каждый курс отдельно: курсов у человека единицы,
+// и городить ради них запрос с объединением значило бы усложнять то, что
+// и так дёшево.
+func (s *Service) Courses(ctx context.Context, userID user.ID) ([]CourseSummary, error) {
+	courses, err := s.deps.Courses.ByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("получить курсы пользователя: %w", err)
+	}
+
+	out := make([]CourseSummary, 0, len(courses))
+	for _, course := range courses {
+		deck, err := s.deps.Decks.ByID(ctx, course.DeckID)
+		if err != nil {
+			return nil, fmt.Errorf("найти колоду курса %d: %w", course.ID, err)
+		}
+		out = append(out, CourseSummary{Course: course, Deck: deck})
+	}
+	return out, nil
+}
+
 // HasCourses сообщает, учит ли пользователь уже что-нибудь: по этому
 // признаку /start отличает знакомство от повторного захода.
 func (s *Service) HasCourses(ctx context.Context, userID user.ID) (bool, error) {

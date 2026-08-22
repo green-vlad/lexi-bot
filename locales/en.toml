@@ -47,3 +47,42 @@ other = "Show translation"
 description = "Current daily limit of new words"
 one = "Currently {{.Count}} new word per day"
 other = "Currently {{.Count}} new words per day"
+
+[lang.ru]
+other = "Russian"
+
+[lang.en]
+other = "English"
+
+[lang.ko]
+other = "Korean"
+
+[lang.es]
+other = "Spanish"
+
+[onboarding.choose_learning]
+other = "Which language are we learning?"
+
+[onboarding.choose_deck]
+other = "Which deck shall we take?"
+
+[onboarding.choose_translation]
+other = "Which language to translate into?"
+
+[onboarding.back]
+other = "← Back"
+
+[onboarding.done]
+other = "All set: learning «{{.Deck}}» with translations into {{.Language}}.\n\n{{.PerDay}} new words a day, reminders off — all of that is in /settings.\nStart now: /learn"
+
+[onboarding.already_started]
+other = "You are already learning «{{.Deck}}». Continue: /learn\n\nTo add another course, see /decks."
+
+[onboarding.nothing_to_learn]
+other = "The dictionaries are not loaded yet — nothing to learn so far. Please check back later."
+
+[onboarding.expired]
+other = "This button no longer works. Start over: /start"
+
+[common.friend]
+other = "friend"

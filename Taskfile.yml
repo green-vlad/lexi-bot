@@ -120,10 +120,27 @@ tasks:
       - command -v golangci-lint
 
   lint:
-    desc: Запустить golangci-lint
+    desc: Запустить golangci-lint и проверить go.mod
     deps: [tools]
     cmds:
+      - task: tidy:check
       - golangci-lint run ./...
+
+  tidy:check:
+    desc: Проверить, что go.mod и go.sum в актуальном состоянии
+    cmds:
+      # Тот же гейт, что и в CI. Здесь он повторён, потому что узнавать
+      # о забытом `go mod tidy` после пуша — обидно и медленно: прямая
+      # зависимость, записанная как транзитивная, ничего не ломает
+      # сегодня, но врёт о том, чем проект пользуется.
+      - |
+        cp go.mod go.mod.tidycheck && cp go.sum go.sum.tidycheck
+        trap 'mv go.mod.tidycheck go.mod; mv go.sum.tidycheck go.sum' EXIT
+        go mod tidy
+        if ! diff -q go.mod go.mod.tidycheck >/dev/null || ! diff -q go.sum go.sum.tidycheck >/dev/null; then
+          echo "go.mod или go.sum не в актуальном состоянии: запустите go mod tidy" >&2
+          exit 1
+        fi
 
   vet:
     desc: go vet

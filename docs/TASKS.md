@@ -120,7 +120,7 @@
   Порт `Messenger` (`SendMessage`, `EditMessage`, `AnswerCallback`, `SendDocument`, `DownloadFile`), адаптер на `github.com/go-telegram/bot`, цикл long polling, graceful shutdown по сигналу.
   **DoD:** бот отвечает `pong` на `/ping` в реальном чате; по `SIGTERM` завершает обработку текущих апдейтов и закрывает пул.
 
-- [ ] **T-023. Роутер и middleware**
+- [x] **T-023. Роутер и middleware**
   Диспетчеризация команд / текста / callback'ов. Middleware: восстановление после паники, логирование с `update_id`, определение пользователя (авторегистрация), подстановка `Localizer` по `ui_lang`.
   **DoD:** юнит-тесты на фейковом `Messenger`; паника в хендлере не роняет процесс и даёт пользователю сообщение об ошибке.
 

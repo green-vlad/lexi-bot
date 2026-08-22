@@ -17,9 +17,11 @@ import (
 	// где системного tzdata нет, а сутки пользователя считаются по его зоне.
 	_ "time/tzdata"
 
+	"lexi-bot/internal/adapter/telegram"
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
+	"lexi-bot/internal/usecase/port"
 )
 
 const migrationTimeout = 30 * time.Second
@@ -54,12 +56,49 @@ func run() error {
 		return err
 	}
 
-	// TODO(T-022): пул подключений, репозитории, сценарии и long polling.
-	log.Info("бот запущен, ожидание сигнала завершения")
-	<-ctx.Done()
+	pool, err := postgres.NewPool(ctx, postgres.DefaultPoolConfig(cfg.DatabaseURL))
+	if err != nil {
+		return err
+	}
+	// Пул закрывается последним, уже после того, как транспорт доработал:
+	// начатая обработка апдейта имеет право дописать свою транзакцию.
+	defer pool.Close()
+
+	transport, err := telegram.New(telegram.Config{
+		Token:       cfg.BotToken,
+		PollTimeout: cfg.PollTimeout,
+		Logger:      log,
+	})
+	if err != nil {
+		return err
+	}
+
+	// TODO(T-023): вместо временного обработчика здесь появится роутер
+	// с middleware, а за ним — сценарии.
+	log.Info("бот запущен")
+	if err := transport.Run(ctx, ping(transport, log)); err != nil {
+		return err
+	}
 
 	log.Info("получен сигнал завершения, останавливаемся")
 	return nil
+}
+
+// ping — временный обработчик до появления роутера (T-023). Он отвечает
+// на /ping и молчит на всё остальное: этого достаточно, чтобы убедиться,
+// что транспорт живой, и честнее, чем притворяться работающим ботом.
+func ping(messenger port.Messenger, log *slog.Logger) port.UpdateHandler {
+	return port.UpdateHandlerFunc(func(ctx context.Context, u *port.Update) error {
+		if u.Command != "ping" {
+			return nil
+		}
+
+		if _, err := messenger.SendMessage(ctx, port.OutgoingMessage{ChatID: u.Chat, Text: "pong"}); err != nil {
+			return err
+		}
+		log.Info("ответили pong", slog.Int64("chat_id", int64(u.Chat)))
+		return nil
+	})
 }
 
 // migrate приводит схему базы к актуальной версии. Приложение делает это само

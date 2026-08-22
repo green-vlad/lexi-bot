@@ -25,6 +25,64 @@ var _ port.DeckRepo = (*DeckRepo)(nil)
 
 const deckColumns = "id, code, COALESCE(owner_user_id, 0), lang_code, title, description, size"
 
+// Languages возвращает языки, для которых есть встроенные колоды.
+func (r *DeckRepo) Languages(ctx context.Context) ([]lexicon.Language, error) {
+	const op = "получить языки изучения"
+	const query = `
+		SELECT DISTINCT lang_code
+		FROM decks
+		WHERE owner_user_id IS NULL AND size > 0
+		ORDER BY lang_code`
+
+	return r.languages(ctx, op, query)
+}
+
+// TranslationLanguages возвращает языки, на которые переведены слова колоды.
+//
+// EXISTS вместо DISTINCT по переводам: нас интересует наличие хотя бы одного
+// перевода на язык, а не их число, и база может остановиться на первом.
+func (r *DeckRepo) TranslationLanguages(ctx context.Context, deckID lexicon.DeckID) ([]lexicon.Language, error) {
+	const op = "получить языки перевода колоды"
+	const query = `
+		SELECT code
+		FROM languages l
+		WHERE EXISTS (
+			SELECT 1
+			FROM deck_items di
+			JOIN translations t ON t.lexeme_id = di.lexeme_id
+			WHERE di.deck_id = $1 AND t.lang_code = l.code
+		)
+		ORDER BY code`
+
+	return r.languages(ctx, op, query, int64(deckID))
+}
+
+// languages — общая часть запросов, возвращающих список языков.
+func (r *DeckRepo) languages(ctx context.Context, op, query string, args ...any) ([]lexicon.Language, error) {
+	rows, err := r.db(ctx).Query(ctx, query, args...)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []lexicon.Language
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, wrap(op, err)
+		}
+		lang, err := lexicon.ParseLanguage(code)
+		if err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, lang)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(op, err)
+	}
+	return out, nil
+}
+
 // Builtin возвращает встроенные колоды языка изучения, по слагу.
 func (r *DeckRepo) Builtin(ctx context.Context, lang lexicon.Language) ([]lexicon.Deck, error) {
 	const op = "получить встроенные колоды"

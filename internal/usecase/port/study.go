@@ -101,6 +101,20 @@ type CardRepo interface {
 	// CountsByState считает карточки курса по фазам — это основа статистики
 	// «выучено / на повторении / новых осталось».
 	CountsByState(ctx context.Context, courseID study.CourseID) (map[study.State]int, error)
+
+	// NextDue возвращает ближайший срок повторения в курсе. Второе значение —
+	// false, если повторять больше нечего: у сводки в конце занятия это
+	// разные сообщения.
+	NextDue(ctx context.Context, courseID study.CourseID) (time.Time, bool, error)
+}
+
+// StatsQuery — за какие ответы считать сводку.
+type StatsQuery struct {
+	UserID user.ID
+	// CourseID сужает подсчёт до одного курса. Ноль означает «по всем»:
+	// сводка занятия говорит про курс, а статистика в /stats — про человека.
+	CourseID study.CourseID
+	Since    time.Time
 }
 
 // ReviewStats — сводка по журналу за период.
@@ -131,8 +145,8 @@ type ReviewRepo interface {
 	// реализация её не меняет.
 	Add(ctx context.Context, userID user.ID, review *study.Review) error
 
-	// Stats считает ответы пользователя начиная с момента since.
-	Stats(ctx context.Context, userID user.ID, since time.Time) (ReviewStats, error)
+	// Stats считает ответы за период.
+	Stats(ctx context.Context, q StatsQuery) (ReviewStats, error)
 
 	// ActiveDays возвращает календарные дни, в которые пользователь отвечал,
 	// от свежего к старому. Дни считаются в его таймзоне: серия занятий

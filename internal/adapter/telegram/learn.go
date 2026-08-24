@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -209,7 +210,7 @@ func (l *Learn) showNext(ctx context.Context, u *port.Update, courseID study.Cou
 		return nil, err
 	}
 	if reason != session.ReasonNone {
-		return nil, l.finish(ctx, u, messageID, reason)
+		return nil, l.finish(ctx, u, messageID, courseID, reason)
 	}
 	return l.showCard(ctx, u, messageID, &item)
 }
@@ -494,8 +495,8 @@ func (l *Learn) rate(ctx context.Context, u *port.Update) error {
 	return l.continueOutsideDialog(ctx, u, outcome.CourseID, u.Callback.MessageID)
 }
 
-// finish сообщает, что карточек больше нет.
-func (l *Learn) finish(ctx context.Context, u *port.Update, messageID port.MessageID, reason session.Reason) error {
+// finish сообщает, что карточек больше нет, и показывает итог занятия.
+func (l *Learn) finish(ctx context.Context, u *port.Update, messageID port.MessageID, courseID study.CourseID, reason session.Reason) error {
 	key := "learn.done_caught_up"
 	switch reason {
 	case session.ReasonDailyLimit:
@@ -512,8 +513,96 @@ func (l *Learn) finish(ctx context.Context, u *port.Update, messageID port.Messa
 	if err != nil {
 		return err
 	}
+
+	// У курса на паузе итога нет: он и не занимался.
+	if reason != session.ReasonPaused {
+		summary, err := l.session.Summary(ctx, courseID)
+		if err != nil {
+			return err
+		}
+		if line := summaryText(localizer, &summary, l.clock.Now()); line != "" {
+			text += "\n\n" + line
+		}
+	}
+
 	// Кнопки убираем: занятие кончилось, нажимать нечего.
 	return l.render(ctx, u, messageID, text, nil)
+}
+
+// summaryText собирает итог занятия.
+//
+// Пустая строка означает, что рассказывать не о чем: человек открыл /learn
+// и не ответил ни на одну карточку, и «повторено 0 карточек, точность 0%»
+// было бы не итогом, а упрёком.
+func summaryText(localizer port.Localizer, summary *session.Summary, now time.Time) string {
+	if summary.Reviewed == 0 {
+		return nextReviewText(localizer, summary, now)
+	}
+
+	line, err := localizer.Plural("learn.summary_reviewed", summary.Reviewed, nil)
+	if err != nil {
+		return ""
+	}
+	if summary.New > 0 {
+		if newLine, err := localizer.Plural("learn.summary_new", summary.New, nil); err == nil {
+			line += newLine
+		}
+	}
+	line += "."
+
+	// Точность показывается, только если в журнале есть по чему считать:
+	// «0% верных» рядом с «повторено 3 карточки» вводит в заблуждение.
+	if summary.Answered > 0 {
+		accuracy, err := localizer.T("learn.summary_accuracy", port.Args{
+			// Округление к ближайшему: 83.4% — это 83%, а не 83.4%,
+			// и уж точно не 84%.
+			"Percent": int(math.Round(summary.Accuracy * 100)),
+		})
+		if err == nil {
+			line += " " + accuracy
+		}
+	}
+
+	if next := nextReviewText(localizer, summary, now); next != "" {
+		line += "\n" + next
+	}
+	return line
+}
+
+// nextReviewText говорит, когда ждать следующую карточку.
+//
+// Время показывается «через сколько», а не датой: человеку важно, скоро ли
+// возвращаться, а не какого числа это случится. Крупные единицы вместо
+// точных минут по той же причине — «через 3 дня» полезнее, чем
+// «через 4320 минут».
+func nextReviewText(localizer port.Localizer, summary *session.Summary, now time.Time) string {
+	if !summary.HasNext {
+		return ""
+	}
+
+	left := summary.NextReview.Sub(now)
+	switch {
+	case left <= 0:
+		text, err := localizer.T("learn.summary_next_now", nil)
+		if err != nil {
+			return ""
+		}
+		return text
+	case left < time.Hour:
+		return plural(localizer, "learn.summary_next_minutes", int(math.Ceil(left.Minutes())))
+	case left < 24*time.Hour:
+		return plural(localizer, "learn.summary_next_hours", int(math.Round(left.Hours())))
+	default:
+		return plural(localizer, "learn.summary_next_days", int(math.Round(left.Hours()/24)))
+	}
+}
+
+func plural(localizer port.Localizer, key string, count int) string {
+	text, err := localizer.Plural(key, count, nil)
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 // stale отвечает на кнопку от карточки, на которую уже ответили.

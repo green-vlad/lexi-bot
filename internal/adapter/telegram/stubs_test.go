@@ -6,6 +6,7 @@ import (
 
 	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
+	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/usecase/port"
 )
 
@@ -244,3 +245,39 @@ type stubRand struct{}
 func (stubRand) Float64() float64            { return 0.5 }
 func (stubRand) IntN(n int) int              { return 0 }
 func (stubRand) Shuffle(int, func(i, j int)) {}
+
+// NextDue возвращает ближайший срок повторения — как и в базе, с учётом
+// того, что отложенные карточки не в счёт.
+func (s *stubCards) NextDue(_ context.Context, courseID study.CourseID) (time.Time, bool, error) {
+	var (
+		next  time.Time
+		found bool
+	)
+	for i := range s.cards {
+		card := &s.cards[i]
+		if card.CourseID != courseID || card.State == study.StateSuspended {
+			continue
+		}
+		if !found || card.DueAt.Before(next) {
+			next, found = card.DueAt, true
+		}
+	}
+	return next, found, nil
+}
+
+// stubReviews — журнал повторений в памяти: сводке от него нужна только
+// точность.
+type stubReviews struct {
+	total   int
+	correct int
+}
+
+func (s *stubReviews) Add(context.Context, user.ID, *study.Review) error { return nil }
+
+func (s *stubReviews) Stats(context.Context, port.StatsQuery) (port.ReviewStats, error) {
+	return port.ReviewStats{Total: s.total, Correct: s.correct}, nil
+}
+
+func (s *stubReviews) ActiveDays(context.Context, user.ID, user.Timezone, time.Time) ([]time.Time, error) {
+	return nil, nil
+}

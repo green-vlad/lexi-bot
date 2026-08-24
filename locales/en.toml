@@ -152,3 +152,31 @@ other = "Almost. You typed «{{.Typed}}», the correct spelling is «{{.Translat
 
 [learn.answer_typed_wrong]
 other = "Not quite. You typed «{{.Typed}}».\n{{.Term}} — {{.Translation}}"
+
+[learn.summary_reviewed]
+description = "How many cards were reviewed today"
+one = "{{.Count}} card today"
+other = "{{.Count}} cards today"
+
+[learn.summary_new]
+description = "How many of them were new"
+one = ", {{.Count}} of them new"
+other = ", {{.Count}} of them new"
+
+[learn.summary_accuracy]
+other = "Accuracy: {{.Percent}}%"
+
+[learn.summary_next_minutes]
+one = "Next review in {{.Count}} minute"
+other = "Next review in {{.Count}} minutes"
+
+[learn.summary_next_hours]
+one = "Next review in {{.Count}} hour"
+other = "Next review in {{.Count}} hours"
+
+[learn.summary_next_days]
+one = "Next review in {{.Count}} day"
+other = "Next review in {{.Count}} days"
+
+[learn.summary_next_now]
+other = "The next review is already due: /learn"

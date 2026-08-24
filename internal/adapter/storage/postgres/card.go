@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -258,6 +259,29 @@ func nullableTime(t time.Time) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// NextDue возвращает ближайший срок повторения в курсе.
+//
+// Запрос идёт по тому же индексу, что и выдача карточек: отложенные
+// в него не входят, а первая строка — это и есть ближайший срок.
+func (r *CardRepo) NextDue(ctx context.Context, courseID study.CourseID) (time.Time, bool, error) {
+	const op = "найти ближайшее повторение"
+	const query = `
+		SELECT due_at FROM cards
+		WHERE user_course_id = $1 AND state <> 'suspended'
+		ORDER BY due_at
+		LIMIT 1`
+
+	var due time.Time
+	err := r.db(ctx).QueryRow(ctx, query, int64(courseID)).Scan(&due)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, wrap(op, err)
+	}
+	return due, true, nil
 }
 
 // lockCounter берёт строку дневного счётчика под блокировку, создавая её

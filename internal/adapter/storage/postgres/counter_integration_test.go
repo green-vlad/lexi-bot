@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lexi-bot/internal/adapter/storage/postgres"
+	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/usecase/port"
@@ -215,7 +216,7 @@ func TestReviewAddAndStats(t *testing.T) {
 		}
 	}
 
-	stats, err := repo.Stats(ctx, f.user.ID, testNow.Add(-time.Hour))
+	stats, err := repo.Stats(ctx, port.StatsQuery{UserID: f.user.ID, Since: testNow.Add(-time.Hour)})
 	if err != nil {
 		t.Fatalf("Stats() вернул ошибку: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestReviewAddAndStats(t *testing.T) {
 	}
 
 	// Ответы до начала периода в сводку не попадают.
-	recent, err := repo.Stats(ctx, f.user.ID, testNow.Add(2*time.Minute))
+	recent, err := repo.Stats(ctx, port.StatsQuery{UserID: f.user.ID, Since: testNow.Add(2 * time.Minute)})
 	if err != nil {
 		t.Fatalf("Stats() вернул ошибку: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestReviewAddAndStats(t *testing.T) {
 	}
 
 	// У пользователя без ответов точность нулевая, а не стопроцентная.
-	empty, err := repo.Stats(ctx, f.user.ID, testNow.AddDate(0, 0, 1))
+	empty, err := repo.Stats(ctx, port.StatsQuery{UserID: f.user.ID, Since: testNow.AddDate(0, 0, 1)})
 	if err != nil {
 		t.Fatalf("Stats() вернул ошибку: %v", err)
 	}
@@ -301,5 +302,118 @@ func TestReviewActiveDaysUseUserTimezone(t *testing.T) {
 	}
 	if got, want := utcDays[0].Format(time.DateOnly), "2026-08-21"; got != want {
 		t.Errorf("день в UTC = %q, ожидался %q", got, want)
+	}
+}
+
+func TestReviewStatsByCourse(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewReviewRepo(pool)
+
+	f := newCourse(t, pool, 2)
+	cards, err := postgres.NewCardRepo(pool).IntroduceNew(ctx, port.IntroduceQuery{
+		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 2,
+	})
+	if err != nil {
+		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
+	}
+
+	// Второй курс того же пользователя: его ответы в сводку первого
+	// попадать не должны.
+	otherDeck := builtinDeck(t, pool, "en-demo", langEN)
+	other, err := postgres.NewCourseRepo(pool).Ensure(ctx, study.Course{
+		UserID: int64(f.user.ID), DeckID: otherDeck, TranslationLang: langRU, Status: study.CourseActive,
+	})
+	if err != nil {
+		t.Fatalf("Ensure() вернул ошибку: %v", err)
+	}
+	otherLexemes := saveLexemes(t, pool, newLexeme(t, "새"))
+	if err := postgres.NewDeckRepo(pool).AddItems(ctx, []lexicon.DeckItem{
+		{DeckID: otherDeck, LexemeID: otherLexemes[0].ID, Position: 0},
+	}); err != nil {
+		t.Fatalf("AddItems() вернул ошибку: %v", err)
+	}
+	otherCards, err := postgres.NewCardRepo(pool).IntroduceNew(ctx, port.IntroduceQuery{
+		CourseID: other.ID, Now: testNow, Day: testDay, Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
+	}
+
+	for _, item := range []struct {
+		card    study.CardID
+		correct bool
+	}{
+		{cards[0].ID, true},
+		{cards[1].ID, false},
+		{otherCards[0].ID, true},
+	} {
+		review := makeReview(t, item.card, testNow, item.correct)
+		if err := repo.Add(ctx, f.user.ID, &review); err != nil {
+			t.Fatalf("Add() вернул ошибку: %v", err)
+		}
+	}
+
+	// По одному курсу: два ответа, один верный.
+	byCourse, err := repo.Stats(ctx, port.StatsQuery{
+		UserID: f.user.ID, CourseID: f.course.ID, Since: testNow.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("Stats() вернул ошибку: %v", err)
+	}
+	if byCourse.Total != 2 || byCourse.Correct != 1 {
+		t.Errorf("сводка курса = %+v, ожидалось 2 ответа и 1 верный", byCourse)
+	}
+
+	// По пользователю целиком: все три.
+	byUser, err := repo.Stats(ctx, port.StatsQuery{UserID: f.user.ID, Since: testNow.Add(-time.Hour)})
+	if err != nil {
+		t.Fatalf("Stats() вернул ошибку: %v", err)
+	}
+	if byUser.Total != 3 {
+		t.Errorf("сводка пользователя = %+v, ожидалось три ответа", byUser)
+	}
+}
+
+func TestCardNextDue(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewCardRepo(pool)
+
+	f := newCourse(t, pool, 3)
+
+	// У курса без карточек повторять нечего, и это не ошибка.
+	if _, ok, err := repo.NextDue(ctx, f.course.ID); err != nil || ok {
+		t.Fatalf("NextDue() = %t, %v; ожидалось «нечего»", ok, err)
+	}
+
+	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
+		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 3,
+	})
+	if err != nil {
+		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
+	}
+
+	set := func(id study.CardID, due time.Time, state string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, "UPDATE cards SET due_at = $2, state = $3 WHERE id = $1",
+			int64(id), due, state); err != nil {
+			t.Fatalf("обновление карточки не прошло: %v", err)
+		}
+	}
+	set(cards[0].ID, testNow.Add(3*time.Hour), "review")
+	set(cards[1].ID, testNow.Add(time.Hour), "review")
+	// Отложенная ближе всех, но её не выдают — значит и в сводке её нет.
+	set(cards[2].ID, testNow.Add(time.Minute), "suspended")
+
+	next, ok, err := repo.NextDue(ctx, f.course.ID)
+	if err != nil {
+		t.Fatalf("NextDue() вернул ошибку: %v", err)
+	}
+	if !ok {
+		t.Fatal("ближайшее повторение не найдено")
+	}
+	if !next.Equal(testNow.Add(time.Hour)) {
+		t.Errorf("ближайшее повторение = %v, ожидалось через час", next)
 	}
 }

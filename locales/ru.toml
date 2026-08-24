@@ -158,3 +158,41 @@ other = "Почти. Вы написали «{{.Typed}}», а правильно
 
 [learn.answer_typed_wrong]
 other = "Мимо. Вы написали «{{.Typed}}».\n{{.Term}} — {{.Translation}}"
+
+[learn.summary_reviewed]
+description = "Сколько карточек повторено за сегодня"
+one = "Сегодня {{.Count}} карточка"
+few = "Сегодня {{.Count}} карточки"
+many = "Сегодня {{.Count}} карточек"
+other = "Сегодня {{.Count}} карточки"
+
+[learn.summary_new]
+description = "Сколько из них новых"
+one = ", из них {{.Count}} новое"
+few = ", из них {{.Count}} новых"
+many = ", из них {{.Count}} новых"
+other = ", из них {{.Count}} новых"
+
+[learn.summary_accuracy]
+other = "Точность: {{.Percent}}%"
+
+[learn.summary_next_minutes]
+one = "Следующее повторение через {{.Count}} минуту"
+few = "Следующее повторение через {{.Count}} минуты"
+many = "Следующее повторение через {{.Count}} минут"
+other = "Следующее повторение через {{.Count}} минуты"
+
+[learn.summary_next_hours]
+one = "Следующее повторение через {{.Count}} час"
+few = "Следующее повторение через {{.Count}} часа"
+many = "Следующее повторение через {{.Count}} часов"
+other = "Следующее повторение через {{.Count}} часа"
+
+[learn.summary_next_days]
+one = "Следующее повторение через {{.Count}} день"
+few = "Следующее повторение через {{.Count}} дня"
+many = "Следующее повторение через {{.Count}} дней"
+other = "Следующее повторение через {{.Count}} дня"
+
+[learn.summary_next_now]
+other = "Следующее повторение уже готово: /learn"

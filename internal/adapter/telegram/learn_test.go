@@ -19,6 +19,7 @@ type learnFixture struct {
 	router    *telegram.Router
 	messenger *editingMessenger
 	decks     *stubDeckSource
+	reviews   *stubReviews
 	rand      *stubRand
 	sessions  *fakeSessions
 	cards     *stubCards
@@ -67,6 +68,7 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	}
 	f.cards = newStubCards(pool, course.ID)
 	f.decks = &stubDeckSource{translations: translations}
+	f.reviews = &stubReviews{}
 	// Порядок вариантов фиксирован: тест должен знать, где правильный.
 	f.rand = &stubRand{}
 
@@ -79,6 +81,7 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	service, err := session.New(&session.Deps{
 		Cards:     f.cards,
 		Decks:     f.decks,
+		Reviews:   f.reviews,
 		Rand:      f.rand,
 		Counters:  f.cards.counters,
 		Courses:   f.courses,
@@ -595,5 +598,75 @@ func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
 	}
 	if !card.IsNew() {
 		t.Error("пустое сообщение засчиталось ответом")
+	}
+}
+
+func TestLearnShowsSummary(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 2, study.ModeRecall)
+	f.reviews.total, f.reviews.correct = 2, 1
+
+	// Проходим обе карточки: одну верно, одну нет.
+	for i, rating := range []string{"good", "again"} {
+		f.send(t, "/learn")
+		_, buttons := f.screen(t)
+		if len(buttons) == 0 {
+			t.Fatalf("карточка %d: кнопок нет", i+1)
+		}
+		f.press(t, buttons[0])
+
+		_, ratings := f.screen(t)
+		for _, data := range ratings {
+			if strings.Contains(data, ":"+rating+":") {
+				f.press(t, data)
+			}
+		}
+	}
+
+	// Слова кончились — показан итог.
+	text, buttons := f.screen(t)
+	if len(buttons) != 0 {
+		t.Errorf("в итоге остались кнопки: %v", buttons)
+	}
+	if !strings.Contains(text, "2 карточки") {
+		t.Errorf("итог = %q, ожидалось число повторённых", text)
+	}
+	if !strings.Contains(text, "2 новых") {
+		t.Errorf("итог = %q, ожидалось число новых слов", text)
+	}
+	if !strings.Contains(text, "50%") {
+		t.Errorf("итог = %q, ожидалась точность 50%%", text)
+	}
+	if !strings.Contains(text, "Следующее повторение") {
+		t.Errorf("итог = %q, ожидался срок следующего повторения", text)
+	}
+}
+
+func TestLearnSummaryWithoutAnswers(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 1, study.ModeRecall)
+
+	// Отвечаем на единственную карточку, чтобы дневной лимит кончился
+	// не сразу, а колода — да.
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+	f.press(t, buttons[0])
+	_, ratings := f.screen(t)
+	for _, data := range ratings {
+		if strings.Contains(data, ":good:") {
+			f.press(t, data)
+		}
+	}
+
+	text, _ := f.screen(t)
+	if !strings.Contains(text, "1 карточка") {
+		t.Errorf("итог = %q, ожидалась одна карточка", text)
+	}
+	// Точность из журнала не пришла — фейк молчит, — но и «0%» в итоге
+	// быть не должно: строка про точность просто опускается.
+	if strings.Contains(text, "Точность: 0%") {
+		t.Errorf("итог = %q: нулевая точность при верном ответе вводит в заблуждение", text)
 	}
 }

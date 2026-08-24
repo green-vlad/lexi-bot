@@ -222,6 +222,7 @@ type fixture struct {
 	service  *session.Service
 	decks    *fakeDecks
 	rand     *fakeRand
+	reviews  *switchableReviews
 	cards    *fakeCards
 	counters *fakeCounters
 	settings *fakeSettings
@@ -250,6 +251,7 @@ func newFixture(t *testing.T, words int) *fixture {
 	f.cards = &fakeCards{pool: pool, counters: f.counters}
 	f.decks = &fakeDecks{}
 	f.rand = &fakeRand{}
+	f.reviews = &switchableReviews{}
 	f.courses = &fakeCourses{course: study.Course{
 		ID: courseID, UserID: 42, DeckID: 7, TranslationLang: langRU, Status: study.CourseActive,
 	}}
@@ -258,6 +260,7 @@ func newFixture(t *testing.T, words int) *fixture {
 	service, err := session.New(&session.Deps{
 		Decks:     f.decks,
 		Rand:      f.rand,
+		Reviews:   f.reviews,
 		Scheduler: mustScheduler(t),
 		Resolver:  study.DefaultRatingResolver(),
 		Cards:     f.cards,
@@ -727,4 +730,50 @@ func (f *fakeRand) Shuffle(n int, swap func(i, j int)) {
 	if f.shuffle != nil {
 		f.shuffle(n, swap)
 	}
+}
+
+// NextDue возвращает ближайший срок повторения — как и в базе, с учётом
+// того, что отложенные карточки не в счёт.
+func (f *fakeCards) NextDue(_ context.Context, courseID study.CourseID) (time.Time, bool, error) {
+	var (
+		next  time.Time
+		found bool
+	)
+	for i := range f.cards {
+		card := &f.cards[i]
+		if card.CourseID != courseID || card.State == study.StateSuspended {
+			continue
+		}
+		if !found || card.DueAt.Before(next) {
+			next, found = card.DueAt, true
+		}
+	}
+	return next, found, nil
+}
+
+// switchableReviews позволяет тесту подставить свой журнал, не пересобирая
+// всю сессию.
+type switchableReviews struct {
+	inner port.ReviewRepo
+}
+
+func (s *switchableReviews) Add(ctx context.Context, userID user.ID, review *study.Review) error {
+	if s.inner == nil {
+		return nil
+	}
+	return s.inner.Add(ctx, userID, review)
+}
+
+func (s *switchableReviews) Stats(ctx context.Context, q port.StatsQuery) (port.ReviewStats, error) {
+	if s.inner == nil {
+		return port.ReviewStats{}, nil
+	}
+	return s.inner.Stats(ctx, q)
+}
+
+func (s *switchableReviews) ActiveDays(ctx context.Context, userID user.ID, tz user.Timezone, since time.Time) ([]time.Time, error) {
+	if s.inner == nil {
+		return nil, nil
+	}
+	return s.inner.ActiveDays(ctx, userID, tz, since)
 }

@@ -35,16 +35,26 @@ func (r *ReviewRepo) Add(ctx context.Context, userID user.ID, review *study.Revi
 	return insertReview(ctx, r.db(ctx), userID, review)
 }
 
-// Stats считает ответы пользователя начиная с момента since.
-func (r *ReviewRepo) Stats(ctx context.Context, userID user.ID, since time.Time) (port.ReviewStats, error) {
+// Stats считает ответы за период.
+//
+// Курс фильтруется через карточки: в журнале его нет намеренно — там лежит
+// денормализованный user_id, которого хватает статистике по человеку,
+// а объединение с cards нужно лишь сводке одного курса.
+func (r *ReviewRepo) Stats(ctx context.Context, q port.StatsQuery) (port.ReviewStats, error) {
 	const op = "посчитать сводку по журналу"
 	const query = `
-		SELECT count(*), count(*) FILTER (WHERE is_correct)
-		FROM reviews
-		WHERE user_id = $1 AND rated_at >= $2`
+		SELECT count(*), count(*) FILTER (WHERE r.is_correct)
+		FROM reviews r
+		WHERE r.user_id = $1
+		  AND r.rated_at >= $2
+		  AND ($3 = 0 OR EXISTS (
+		      SELECT 1 FROM cards c
+		      WHERE c.id = r.card_id AND c.user_course_id = $3
+		  ))`
 
 	var stats port.ReviewStats
-	err := r.db(ctx).QueryRow(ctx, query, int64(userID), since).Scan(&stats.Total, &stats.Correct)
+	err := r.db(ctx).QueryRow(ctx, query, int64(q.UserID), q.Since, int64(q.CourseID)).
+		Scan(&stats.Total, &stats.Correct)
 	if err != nil {
 		return port.ReviewStats{}, wrap(op, err)
 	}

@@ -29,6 +29,7 @@ type fakeCards struct {
 	counters *fakeCounters
 	nextID   study.CardID
 	failWith error
+	applied  applied
 }
 
 func (f *fakeCards) Due(_ context.Context, q port.DueQuery) ([]study.Card, error) {
@@ -102,7 +103,9 @@ func (f *fakeCards) hasCard(lexemeID lexicon.LexemeID) bool {
 	return false
 }
 
-func (f *fakeCards) Apply(context.Context, *port.ReviewOutcome) error { return nil }
+func (f *fakeCards) Apply(_ context.Context, outcome *port.ReviewOutcome) error {
+	return f.applyOutcome(outcome)
+}
 
 func (f *fakeCards) ByID(_ context.Context, id study.CardID) (study.Card, error) {
 	for i := range f.cards {
@@ -249,12 +252,14 @@ func newFixture(t *testing.T, words int) *fixture {
 	f.settings = &fakeSettings{settings: user.DefaultSettings(user.MustParseTimezone("Asia/Seoul"))}
 
 	service, err := session.New(&session.Deps{
-		Cards:    f.cards,
-		Counters: f.counters,
-		Courses:  f.courses,
-		Settings: f.settings,
-		Lexemes:  &fakeLexemes{lexemes: lexemes, translations: translations},
-		Clock:    port.ClockFunc(func() time.Time { return f.now }),
+		Scheduler: mustScheduler(t),
+		Resolver:  study.DefaultRatingResolver(),
+		Cards:     f.cards,
+		Counters:  f.counters,
+		Courses:   f.courses,
+		Settings:  f.settings,
+		Lexemes:   &fakeLexemes{lexemes: lexemes, translations: translations},
+		Clock:     port.ClockFunc(func() time.Time { return f.now }),
 	})
 	if err != nil {
 		t.Fatalf("New() вернул ошибку: %v", err)
@@ -522,4 +527,16 @@ func TestPickMode(t *testing.T) {
 	if got := session.PickMode(nil, &card); got != study.ModeRecall {
 		t.Errorf("без включённых режимов = %v, ожидалось recall", got)
 	}
+}
+
+// mustScheduler — планировщик без джиттера: интервалы в тестах должны быть
+// точными, иначе проверять их пришлось бы с допуском.
+func mustScheduler(t *testing.T) study.Scheduler {
+	t.Helper()
+
+	scheduler, err := study.NewSM2(study.DefaultSM2Config(), nil)
+	if err != nil {
+		t.Fatalf("NewSM2() вернул ошибку: %v", err)
+	}
+	return scheduler
 }

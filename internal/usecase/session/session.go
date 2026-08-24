@@ -28,6 +28,11 @@ type Deps struct {
 	Settings port.SettingsRepo
 	Lexemes  port.LexemeRepo
 	Clock    port.Clock
+	// Scheduler двигает карточку после ответа. Интерфейс, а не SM-2
+	// напрямую: смена алгоритма не должна задевать сценарий.
+	Scheduler study.Scheduler
+	// Resolver превращает ответ в оценку по таблице режимов.
+	Resolver study.RatingResolver
 }
 
 // Service — учебная сессия.
@@ -56,6 +61,9 @@ func New(deps *Deps) (*Service, error) {
 	}
 	if deps.Clock == nil {
 		return nil, errors.New("сессии нужны часы")
+	}
+	if deps.Scheduler == nil {
+		return nil, errors.New("сессии нужен планировщик")
 	}
 	return &Service{deps: *deps}, nil
 }

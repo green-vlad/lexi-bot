@@ -140,3 +140,15 @@ other = "Correct: {{.Term}} — {{.Translation}}"
 
 [learn.answer_wrong]
 other = "Not quite. {{.Term}} — {{.Translation}}"
+
+[learn.type_prompt]
+other = "Type the translation:"
+
+[learn.answer_typed_correct]
+other = "Correct: {{.Term}} — {{.Translation}}"
+
+[learn.answer_typed_typo]
+other = "Almost. You typed «{{.Typed}}», the correct spelling is «{{.Translation}}»."
+
+[learn.answer_typed_wrong]
+other = "Not quite. You typed «{{.Typed}}».\n{{.Term}} — {{.Translation}}"

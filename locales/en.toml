@@ -131,3 +131,12 @@ other = "The course is paused. You can resume it in /decks."
 
 [learn.stale_button]
 other = "This card has already been answered. Continue: /learn"
+
+[learn.choose_translation]
+other = "Pick the translation:"
+
+[learn.answer_correct]
+other = "Correct: {{.Term}} — {{.Translation}}"
+
+[learn.answer_wrong]
+other = "Not quite. {{.Term}} — {{.Translation}}"

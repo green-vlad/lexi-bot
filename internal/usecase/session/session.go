@@ -33,6 +33,11 @@ type Deps struct {
 	Scheduler study.Scheduler
 	// Resolver превращает ответ в оценку по таблице режимов.
 	Resolver study.RatingResolver
+	// Decks нужен для ложных вариантов в режиме выбора.
+	Decks port.DeckRepo
+	// Rand перемешивает варианты ответа. Инжектируемый, чтобы тест мог
+	// проверить не только состав вариантов, но и их порядок.
+	Rand port.Rand
 }
 
 // Service — учебная сессия.
@@ -77,6 +82,11 @@ type Item struct {
 	Translations []lexicon.Translation
 	// Mode — как спрашивать это слово.
 	Mode study.Mode
+	// Options — варианты ответа для режима выбора, уже перемешанные.
+	// Правильный среди них ровно один.
+	Options []string
+	// Correct — какой из вариантов правильный.
+	Correct int
 }
 
 // Reason объясняет, почему карточек нет.
@@ -208,12 +218,98 @@ func (s *Service) prepare(ctx context.Context, course *study.Course, settings *u
 			card.LexemeID, course.TranslationLang, port.ErrNotFound)
 	}
 
-	return Item{
+	item := Item{
 		Card:         *card,
 		Lexeme:       lexemes[0],
 		Translations: translations[card.LexemeID],
 		Mode:         PickMode(settings.QuizModes, card),
-	}, ReasonNone, nil
+		Correct:      -1,
+	}
+
+	if item.Mode == study.ModeChoice {
+		options, correct, err := s.options(ctx, course, &item)
+		if err != nil {
+			return Item{}, ReasonNone, err
+		}
+		if len(options) < MinChoiceOptions {
+			// Вариантов не набралось: в колоде слишком мало слов
+			// с переводами. Спрашивать выбором из двух, где один вариант
+			// правильный, бессмысленно — показываем перевод по кнопке.
+			item.Mode = study.ModeRecall
+			item.Correct = -1
+		} else {
+			item.Options = options
+			item.Correct = correct
+		}
+	}
+	return item, ReasonNone, nil
+}
+
+// MinChoiceOptions — сколько вариантов нужно, чтобы выбор имел смысл.
+// Четыре по плану (§5), но при бедной колоде хватает и трёх: угадать
+// с одной попытки из трёх всё ещё труднее, чем нажать единственную кнопку.
+const MinChoiceOptions = 3
+
+// ChoiceOptions — сколько вариантов показываем, когда есть из чего выбрать.
+const ChoiceOptions = 4
+
+// options собирает варианты ответа: правильный плюс ложные из той же колоды.
+func (s *Service) options(ctx context.Context, course *study.Course, item *Item) (options []string, correctIndex int, err error) {
+	if s.deps.Decks == nil {
+		return nil, 0, errors.New("для режима выбора нужен DeckRepo")
+	}
+
+	correct := item.Translations[0].Text
+
+	distractors, err := s.deps.Decks.Distractors(ctx, port.DistractorQuery{
+		DeckID:  course.DeckID,
+		Lang:    course.TranslationLang,
+		POS:     item.Lexeme.POS,
+		Exclude: item.Card.LexemeID,
+		// Берём с запасом: часть отсеется как совпадающая с правильным
+		// ответом после нормализации.
+		Limit: ChoiceOptions * 3,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("подобрать варианты ответа: %w", err)
+	}
+
+	options = []string{correct}
+	seen := map[string]bool{lexicon.Normalize(correct, course.TranslationLang): true}
+	for _, distractor := range distractors {
+		if len(options) >= ChoiceOptions {
+			break
+		}
+		// Сравнение по нормализованной форме: «дом» и «Дом.» — один вариант,
+		// и показать их рядом значило бы предложить два правильных ответа.
+		key := lexicon.Normalize(distractor.Text, course.TranslationLang)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		options = append(options, distractor.Text)
+	}
+
+	if len(options) < MinChoiceOptions {
+		return nil, 0, nil
+	}
+
+	if s.deps.Rand != nil {
+		// Перемешивая варианты, следим за тем, куда уехал правильный:
+		// иначе пришлось бы искать его строкой, а одинаковые тексты
+		// в разных вариантах — не то, на что стоит полагаться.
+		s.deps.Rand.Shuffle(len(options), func(i, j int) {
+			options[i], options[j] = options[j], options[i]
+
+			switch correctIndex {
+			case i:
+				correctIndex = j
+			case j:
+				correctIndex = i
+			}
+		})
+	}
+	return options, correctIndex, nil
 }
 
 // PickMode выбирает режим проверки для карточки.

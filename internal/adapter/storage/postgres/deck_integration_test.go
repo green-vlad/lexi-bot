@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -336,5 +337,93 @@ func TestDeckTranslationLanguages(t *testing.T) {
 	}
 	if len(langs) != 0 {
 		t.Errorf("языки = %v, ожидался пустой список", langs)
+	}
+}
+
+func TestDeckDistractors(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewDeckRepo(pool)
+	lexemeRepo := postgres.NewLexemeRepo(pool)
+
+	deck := builtinDeck(t, pool, "ko-top-2000", langKO)
+	other := builtinDeck(t, pool, "en-top-1000", langEN)
+
+	nouns := saveLexemes(t, pool,
+		newLexeme(t, "집"), newLexeme(t, "개"), newLexeme(t, "물"))
+	verbs := saveLexemes(t, pool,
+		newLexeme(t, "가다", func(p *lexicon.LexemeParams) { p.POS = lexicon.POSVerb }),
+		newLexeme(t, "먹다", func(p *lexicon.LexemeParams) { p.POS = lexicon.POSVerb }))
+
+	items := make([]lexicon.DeckItem, 0, len(nouns)+len(verbs))
+	translations := make([]lexicon.Translation, 0, len(nouns)+len(verbs))
+	for i, lex := range append(append([]lexicon.Lexeme{}, nouns...), verbs...) {
+		items = append(items, lexicon.DeckItem{DeckID: deck, LexemeID: lex.ID, Position: i})
+		translations = append(translations, lexicon.Translation{
+			LexemeID: lex.ID, Lang: langRU, Text: "перевод " + lex.Term, IsPrimary: true,
+		})
+		// Второй, неосновной перевод: в варианты он попадать не должен.
+		translations = append(translations, lexicon.Translation{
+			LexemeID: lex.ID, Lang: langRU, Text: "синоним " + lex.Term,
+		})
+	}
+	if err := repo.AddItems(ctx, items); err != nil {
+		t.Fatalf("AddItems() вернул ошибку: %v", err)
+	}
+	if err := lexemeRepo.SaveTranslations(ctx, translations); err != nil {
+		t.Fatalf("SaveTranslations() вернул ошибку: %v", err)
+	}
+
+	got, err := repo.Distractors(ctx, port.DistractorQuery{
+		DeckID: deck, Lang: langRU, POS: lexicon.POSNoun, Exclude: nouns[0].ID, Limit: 3,
+	})
+	if err != nil {
+		t.Fatalf("Distractors() вернул ошибку: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("вариантов %d, ожидалось три", len(got))
+	}
+
+	for _, tr := range got {
+		if tr.LexemeID == nouns[0].ID {
+			t.Error("в вариантах оказался перевод самого спрашиваемого слова")
+		}
+		if !tr.IsPrimary {
+			t.Errorf("вариант %q не основной перевод: спрашивать надо то, что учили", tr.Text)
+		}
+		if strings.HasPrefix(tr.Text, "синоним") {
+			t.Errorf("в вариантах неосновной перевод %q", tr.Text)
+		}
+	}
+
+	// Существительные предпочтительнее: выбор между словами одной части речи
+	// честнее, чем между существительным и тремя глаголами.
+	sameKind := 0
+	for _, tr := range got {
+		for _, noun := range nouns[1:] {
+			if tr.LexemeID == noun.ID {
+				sameKind++
+			}
+		}
+	}
+	if sameKind != 2 {
+		t.Errorf("существительных среди вариантов %d, ожидалось два (все, что есть)", sameKind)
+	}
+
+	// Слова чужой колоды в варианты не попадают.
+	if _, err := repo.Distractors(ctx, port.DistractorQuery{
+		DeckID: other, Lang: langRU, Exclude: nouns[0].ID, Limit: 3,
+	}); err != nil {
+		t.Fatalf("Distractors() вернул ошибку: %v", err)
+	}
+
+	empty, err := repo.Distractors(ctx, port.DistractorQuery{
+		DeckID: other, Lang: langRU, Exclude: nouns[0].ID, Limit: 3,
+	})
+	if err != nil {
+		t.Fatalf("Distractors() вернул ошибку: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("из пустой колоды получено %d вариантов", len(empty))
 	}
 }

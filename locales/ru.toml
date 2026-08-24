@@ -137,3 +137,12 @@ other = "Курс на паузе. Продолжить можно в /decks."
 
 [learn.stale_button]
 other = "Эта карточка уже отвечена. Продолжить: /learn"
+
+[learn.choose_translation]
+other = "Выберите перевод:"
+
+[learn.answer_correct]
+other = "Верно: {{.Term}} — {{.Translation}}"
+
+[learn.answer_wrong]
+other = "Мимо. {{.Term}} — {{.Translation}}"

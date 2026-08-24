@@ -22,12 +22,43 @@ var (
 
 // editingMessenger дополняет fakeMessenger правками: онбординг меняет одно
 // и то же сообщение, и проверять нужно именно их.
+// screen — то, что пользователь видит на экране после очередного действия:
+// отправленное сообщение или правка прежнего. Хранятся вперемешку и по
+// порядку, потому что «последнее показанное» — это последнее из обоих,
+// а не последнее из одного вида.
+type screen struct {
+	Text     string
+	Keyboard *port.Keyboard
+}
+
 type editingMessenger struct {
 	fakeMessenger
 
 	mu      sync.Mutex
 	edits   []port.MessageEdit
 	answers []port.CallbackAnswer
+	screens []screen
+}
+
+// SendMessage запоминает отправленное и как сообщение, и как экран.
+func (m *editingMessenger) SendMessage(ctx context.Context, msg port.OutgoingMessage) (port.MessageID, error) {
+	m.mu.Lock()
+	m.screens = append(m.screens, screen{Text: msg.Text, Keyboard: msg.Keyboard})
+	m.mu.Unlock()
+
+	return m.fakeMessenger.SendMessage(ctx, msg)
+}
+
+// latest возвращает последнее показанное пользователю.
+func (m *editingMessenger) latest(t *testing.T) screen {
+	t.Helper()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.screens) == 0 {
+		t.Fatal("боту следовало что-то показать, но он промолчал")
+	}
+	return m.screens[len(m.screens)-1]
 }
 
 func (m *editingMessenger) EditMessage(_ context.Context, edit port.MessageEdit) error {
@@ -35,6 +66,7 @@ func (m *editingMessenger) EditMessage(_ context.Context, edit port.MessageEdit)
 	defer m.mu.Unlock()
 
 	m.edits = append(m.edits, edit)
+	m.screens = append(m.screens, screen{Text: edit.Text, Keyboard: edit.Keyboard})
 	return nil
 }
 

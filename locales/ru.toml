@@ -95,3 +95,45 @@ other = "друг"
 
 [language.choose]
 other = "На каком языке говорить?"
+
+[learn.no_course]
+other = "Сначала выберите, что учить: /start"
+
+[learn.card]
+other = "{{.Term}}"
+
+[learn.card_with_reading]
+other = "{{.Term}}\n{{.Reading}}"
+
+[learn.show_translation]
+other = "Показать перевод"
+
+[learn.rate_again]
+other = "Не помню"
+
+[learn.rate_hard]
+other = "С трудом"
+
+[learn.rate_good]
+other = "Помню"
+
+[learn.rate_easy]
+other = "Легко"
+
+[learn.revealed]
+other = "{{.Term}} — {{.Translation}}\n\nКак прошло?"
+
+[learn.next]
+other = "Дальше →"
+
+[learn.done_caught_up]
+other = "На сегодня всё — вы всё повторили. Возвращайтесь завтра."
+
+[learn.done_daily_limit]
+other = "Дневная норма выполнена. Завтра будет ещё."
+
+[learn.done_paused]
+other = "Курс на паузе. Продолжить можно в /decks."
+
+[learn.stale_button]
+other = "Эта карточка уже отвечена. Продолжить: /learn"

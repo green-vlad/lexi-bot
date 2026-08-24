@@ -1,0 +1,298 @@
+package telegram_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"lexi-bot/internal/adapter/telegram"
+	"lexi-bot/internal/domain/lexicon"
+	"lexi-bot/internal/domain/study"
+	"lexi-bot/internal/domain/user"
+	"lexi-bot/internal/usecase/port"
+	"lexi-bot/internal/usecase/session"
+)
+
+// learnFixture — бот с готовым курсом и парой слов в колоде.
+type learnFixture struct {
+	router    *telegram.Router
+	messenger *editingMessenger
+	cards     *stubCards
+	courses   *stubCourses
+	settings  *stubSettings
+	now       time.Time
+}
+
+func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture {
+	t.Helper()
+
+	f := &learnFixture{
+		messenger: &editingMessenger{},
+		courses:   newStubCourses(),
+		settings:  newStubSettings(),
+		now:       time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
+	}
+
+	settings := user.DefaultSettings(user.UTCTimezone())
+	if len(modes) > 0 {
+		updated, err := settings.WithQuizModes(modes)
+		if err != nil {
+			t.Fatalf("WithQuizModes() вернул ошибку: %v", err)
+		}
+		settings = updated
+	}
+	f.settings.byUser[1] = settings
+
+	course, err := f.courses.Ensure(context.Background(), study.Course{
+		UserID: 1, DeckID: 1, TranslationLang: langRU, Status: study.CourseActive,
+	})
+	if err != nil {
+		t.Fatalf("Ensure() вернул ошибку: %v", err)
+	}
+
+	lexemes := map[lexicon.LexemeID]lexicon.Lexeme{}
+	translations := map[lexicon.LexemeID][]lexicon.Translation{}
+	pool := make([]lexicon.LexemeID, 0, words)
+	terms := []string{"집", "개", "물", "불"}
+	meanings := []string{"дом", "собака", "вода", "огонь"}
+	for i := 0; i < words; i++ {
+		id := lexicon.LexemeID(i + 1)
+		pool = append(pool, id)
+		lexemes[id] = lexicon.Lexeme{ID: id, Lang: langKO, Term: terms[i], Reading: "чтение", POS: lexicon.POSNoun}
+		translations[id] = []lexicon.Translation{{LexemeID: id, Lang: langRU, Text: meanings[i], IsPrimary: true}}
+	}
+	f.cards = newStubCards(pool, course.ID)
+
+	scheduler, err := study.NewSM2(study.DefaultSM2Config(), nil)
+	if err != nil {
+		t.Fatalf("NewSM2() вернул ошибку: %v", err)
+	}
+
+	service, err := session.New(&session.Deps{
+		Cards:     f.cards,
+		Counters:  f.cards.counters,
+		Courses:   f.courses,
+		Settings:  f.settings,
+		Lexemes:   &stubLexemes{lexemes: lexemes, translations: translations},
+		Clock:     port.ClockFunc(func() time.Time { return f.now }),
+		Scheduler: scheduler,
+		Resolver:  study.DefaultRatingResolver(),
+	})
+	if err != nil {
+		t.Fatalf("session.New() вернул ошибку: %v", err)
+	}
+
+	handler, err := telegram.NewLearn(service, f.courses, f.messenger, testCatalog(t))
+	if err != nil {
+		t.Fatalf("NewLearn() вернул ошибку: %v", err)
+	}
+
+	users := newFakeUsers()
+	f.router = telegram.NewRouter()
+	f.router.Use(
+		telegram.AnswerCallbacks(f.messenger, quietLogger()),
+		telegram.Identify(users, quietLogger()),
+		telegram.Localize(testCatalog(t)),
+	)
+	handler.Register(f.router)
+	return f
+}
+
+func (f *learnFixture) send(t *testing.T, text string) {
+	t.Helper()
+
+	if err := f.router.Handle(context.Background(), message(text)); err != nil {
+		t.Fatalf("Handle(%q) вернул ошибку: %v", text, err)
+	}
+}
+
+func (f *learnFixture) press(t *testing.T, data string) {
+	t.Helper()
+
+	update := &port.Update{
+		ID:       2,
+		Chat:     777,
+		Sender:   port.Sender{TelegramID: 555, Username: "durov", LanguageCode: "ru"},
+		Callback: &port.CallbackData{ID: "cb", Data: data, MessageID: 1},
+	}
+	if err := f.router.Handle(context.Background(), update); err != nil {
+		t.Fatalf("нажатие %q вернуло ошибку: %v", data, err)
+	}
+}
+
+// screen возвращает последнее показанное пользователю — неважно, новым
+// сообщением или правкой прежнего.
+func (f *learnFixture) screen(t *testing.T) (text string, buttons []string) {
+	t.Helper()
+
+	last := f.messenger.latest(t)
+
+	if last.Keyboard != nil {
+		for _, row := range last.Keyboard.Rows {
+			for _, b := range row {
+				buttons = append(buttons, b.Data)
+			}
+		}
+	}
+	return last.Text, buttons
+}
+
+func TestLearnShowsCardAndAcceptsRating(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 2, study.ModeRecall)
+
+	f.send(t, "/learn")
+
+	text, buttons := f.screen(t)
+	if !strings.Contains(text, "집") {
+		t.Errorf("на карточке %q, ожидалось слово", text)
+	}
+	if !strings.Contains(text, "чтение") {
+		t.Errorf("на карточке %q, ожидалось чтение слова", text)
+	}
+	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "show:") {
+		t.Fatalf("кнопки = %v, ожидалась одна кнопка показа перевода", buttons)
+	}
+
+	// Перевод открывается по кнопке, а не сразу: в этом весь смысл режима.
+	f.press(t, buttons[0])
+	text, buttons = f.screen(t)
+	if !strings.Contains(text, "дом") {
+		t.Errorf("после показа %q, ожидался перевод", text)
+	}
+	if len(buttons) != len(study.Ratings()) {
+		t.Fatalf("кнопок оценки %d, ожидалось четыре: %v", len(buttons), buttons)
+	}
+
+	// Оценка двигает карточку и показывает следующее слово.
+	var good string
+	for _, data := range buttons {
+		if strings.Contains(data, ":good:") {
+			good = data
+		}
+	}
+	if good == "" {
+		t.Fatalf("среди кнопок нет оценки good: %v", buttons)
+	}
+
+	f.press(t, good)
+	text, buttons = f.screen(t)
+	if !strings.Contains(text, "개") {
+		t.Errorf("после ответа %q, ожидалось следующее слово", text)
+	}
+	if len(buttons) != 1 {
+		t.Errorf("кнопки следующей карточки = %v", buttons)
+	}
+
+	// Карточка действительно уехала: состояние изменилось.
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if card.State == study.StateNew || card.IsNew() {
+		t.Errorf("карточка осталась новой: %+v", card.CardState)
+	}
+}
+
+func TestLearnFinishesWhenNothingLeft(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 1, study.ModeRecall)
+
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+	f.press(t, buttons[0])
+
+	_, buttons = f.screen(t)
+	for _, data := range buttons {
+		if strings.Contains(data, ":good:") {
+			f.press(t, data)
+		}
+	}
+
+	// Слов больше нет: занятие закончилось, кнопок не осталось.
+	text, buttons := f.screen(t)
+	if len(buttons) != 0 {
+		t.Errorf("после конца занятия остались кнопки: %v", buttons)
+	}
+	if !strings.Contains(strings.ToLower(text), "сегодня") {
+		t.Errorf("сообщение о конце = %q", text)
+	}
+}
+
+func TestLearnWithoutCourse(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 2, study.ModeRecall)
+	f.courses.byID = map[study.CourseID]study.Course{}
+
+	f.send(t, "/learn")
+
+	text, _ := f.screen(t)
+	if !strings.Contains(text, "/start") {
+		t.Errorf("ответ без курса = %q, ожидалась подсказка про /start", text)
+	}
+}
+
+func TestLearnSkipsPausedCourse(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 2, study.ModeRecall)
+	for id, course := range f.courses.byID {
+		course.Status = study.CoursePaused
+		f.courses.byID[id] = course
+	}
+
+	f.send(t, "/learn")
+
+	text, _ := f.screen(t)
+	if !strings.Contains(text, "/start") {
+		t.Errorf("ответ = %q: активных курсов нет", text)
+	}
+}
+
+func TestLearnIgnoresStaleButtons(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 2, study.ModeRecall)
+
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+	show := buttons[0]
+
+	f.press(t, show)
+	_, rating := f.screen(t)
+
+	var good string
+	for _, data := range rating {
+		if strings.Contains(data, ":good:") {
+			good = data
+		}
+	}
+	f.press(t, good)
+
+	// Второе нажатие той же кнопки оценки: карточка уже уехала, и токен
+	// в кнопке устарел.
+	f.press(t, good)
+	text, _ := f.screen(t)
+	if !strings.Contains(text, "уже отвечена") {
+		t.Errorf("ответ на устаревшую кнопку = %q", text)
+	}
+
+	// Как и кнопка показа перевода от той же карточки.
+	f.press(t, show)
+	text, _ = f.screen(t)
+	if !strings.Contains(text, "уже отвечена") {
+		t.Errorf("ответ на устаревшую кнопку показа = %q", text)
+	}
+}
+
+func TestLearnNeedsDependencies(t *testing.T) {
+	t.Parallel()
+
+	if _, err := telegram.NewLearn(nil, nil, nil, nil); err == nil {
+		t.Error("хендлер без зависимостей должен быть ошибкой")
+	}
+}

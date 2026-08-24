@@ -146,3 +146,15 @@ other = "Верно: {{.Term}} — {{.Translation}}"
 
 [learn.answer_wrong]
 other = "Мимо. {{.Term}} — {{.Translation}}"
+
+[learn.type_prompt]
+other = "Напечатайте перевод:"
+
+[learn.answer_typed_correct]
+other = "Верно: {{.Term}} — {{.Translation}}"
+
+[learn.answer_typed_typo]
+other = "Почти. Вы написали «{{.Typed}}», а правильно «{{.Translation}}»."
+
+[learn.answer_typed_wrong]
+other = "Мимо. Вы написали «{{.Typed}}».\n{{.Term}} — {{.Translation}}"

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -22,6 +23,22 @@ const (
 	actionAnswer = "ans"
 )
 
+// stateTyping — шаг диалога, на котором бот ждёт напечатанный перевод.
+//
+// Без состояния бот не отличил бы ответ на карточку от случайного сообщения
+// в чат, а «посторонняя команда во время ожидания ответа не считается
+// ответом» (PLAN.md §5) обеспечивается самим движком диалогов: команда
+// прерывает диалог и выполняется.
+const stateTyping = "learn:typing"
+
+// typingState — что нужно помнить, пока ждём ответ.
+type typingState struct {
+	CardID    int64  `json:"card"`
+	Attempt   string `json:"attempt"`
+	ShownAt   int64  `json:"shown"`
+	MessageID int    `json:"message"`
+}
+
 // Learn — команда /learn и режимы проверки.
 //
 // Карточка живёт в одном сообщении, которое правится на месте: слово →
@@ -33,10 +50,11 @@ type Learn struct {
 	messenger port.Messenger
 	catalog   port.Catalog
 	clock     port.Clock
+	dialogs   *Dialogs
 }
 
 // NewLearn создаёт хендлер учебной сессии.
-func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.Messenger, catalog port.Catalog, clock port.Clock) (*Learn, error) {
+func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.Messenger, catalog port.Catalog, clock port.Clock, dialogs *Dialogs) (*Learn, error) {
 	switch {
 	case service == nil:
 		return nil, errors.New("сессии нужен сценарий")
@@ -48,8 +66,16 @@ func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.
 		return nil, errors.New("сессии нужен каталог переводов")
 	case clock == nil:
 		return nil, errors.New("сессии нужны часы")
+	case dialogs == nil:
+		return nil, errors.New("сессии нужен движок диалогов")
 	}
-	return &Learn{session: service, courses: courses, messenger: messenger, catalog: catalog, clock: clock}, nil
+
+	l := &Learn{
+		session: service, courses: courses, messenger: messenger,
+		catalog: catalog, clock: clock, dialogs: dialogs,
+	}
+	dialogs.Register(stateTyping, StepFunc(l.typed))
+	return l, nil
 }
 
 // Register привязывает команду и кнопки к роутеру.
@@ -87,7 +113,7 @@ func (l *Learn) answer(ctx context.Context, u *port.Update) error {
 
 	if outcome.Correct {
 		// Верный ответ не нуждается в разборе: сразу следующее слово.
-		return l.showNext(ctx, u, outcome.CourseID, u.Callback.MessageID)
+		return l.continueOutsideDialog(ctx, u, outcome.CourseID, u.Callback.MessageID)
 	}
 	return l.explainMiss(ctx, u, &outcome)
 }
@@ -158,7 +184,7 @@ func (l *Learn) start(ctx context.Context, u *port.Update) error {
 		// Учить нечего: человек ещё не выбрал курс или поставил всё на паузу.
 		return Reply(l.messenger, "learn.no_course").Handle(ctx, u)
 	}
-	return l.showNext(ctx, u, course.ID, 0)
+	return l.continueOutsideDialog(ctx, u, course.ID, 0)
 }
 
 // next показывает следующую карточку после разбора предыдущей.
@@ -167,42 +193,180 @@ func (l *Learn) next(ctx context.Context, u *port.Update) error {
 	if !ok {
 		return nil
 	}
-	return l.showNext(ctx, u, study.CourseID(callback.ID), u.Callback.MessageID)
+	return l.continueOutsideDialog(ctx, u, study.CourseID(callback.ID), u.Callback.MessageID)
 }
 
 // showNext достаёт следующую карточку и показывает её, правя сообщение
 // messageID; при нулевом messageID отправляет новое.
-func (l *Learn) showNext(ctx context.Context, u *port.Update, courseID study.CourseID, messageID port.MessageID) error {
+//
+// Возвращает состояние ожидания ввода, если показанная карточка спрашивается
+// текстом, — начать диалог должен вызывающий. Начинать его здесь нельзя:
+// когда следующую карточку показывает шаг диалога, движок после шага
+// перезапишет состояние своим, и ожидание пропадёт.
+func (l *Learn) showNext(ctx context.Context, u *port.Update, courseID study.CourseID, messageID port.MessageID) (*typingState, error) {
 	item, reason, err := l.session.Next(ctx, courseID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if reason != session.ReasonNone {
-		return l.finish(ctx, u, messageID, reason)
+		return nil, l.finish(ctx, u, messageID, reason)
 	}
 	return l.showCard(ctx, u, messageID, &item)
 }
 
+// continueOutsideDialog показывает следующую карточку из места, где диалога
+// нет: из команды или нажатия кнопки.
+func (l *Learn) continueOutsideDialog(ctx context.Context, u *port.Update, courseID study.CourseID, messageID port.MessageID) error {
+	waiting, err := l.showNext(ctx, u, courseID, messageID)
+	if err != nil || waiting == nil {
+		return err
+	}
+	return l.dialogs.Start(ctx, stateTyping, *waiting)
+}
+
 // showCard рисует вопрос.
-func (l *Learn) showCard(ctx context.Context, u *port.Update, messageID port.MessageID, item *session.Item) error {
+func (l *Learn) showCard(ctx context.Context, u *port.Update, messageID port.MessageID, item *session.Item) (*typingState, error) {
+	localizer, err := l.localizer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	text, err := cardText(localizer, item)
+	if err != nil {
+		return nil, err
+	}
+	switch item.Mode {
+	case study.ModeChoice:
+		text += "\n\n" + mustText(localizer, "learn.choose_translation")
+	case study.ModeTyping:
+		text += "\n\n" + mustText(localizer, "learn.type_prompt")
+	}
+
+	shownAt := l.clock.Now()
+
+	keyboard, err := l.questionKeyboard(localizer, item, shownAt)
+	if err != nil {
+		return nil, err
+	}
+
+	if item.Mode != study.ModeTyping {
+		return nil, l.render(ctx, u, messageID, text, keyboard)
+	}
+
+	// В режиме ввода кнопок нет, зато бот переходит в ожидание ответа:
+	// иначе он не отличил бы перевод от случайного сообщения в чат.
+	sent, err := l.renderAndReturn(ctx, u, messageID, text, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &typingState{
+		CardID:    int64(item.Card.ID),
+		Attempt:   session.Attempt(&item.Card),
+		ShownAt:   shownAt.Unix(),
+		MessageID: int(sent),
+	}, nil
+}
+
+// typed принимает напечатанный перевод.
+func (l *Learn) typed(ctx context.Context, u *port.Update, payload json.RawMessage) (StepResult, error) {
+	var state typingState
+	if err := UnmarshalPayload(payload, &state); err != nil {
+		return StepResult{}, err
+	}
+
+	text := strings.TrimSpace(u.Text)
+	if text == "" {
+		// Нажатие кнопки или пустое сообщение ответом не считается:
+		// продолжаем ждать.
+		return Stay(state), nil
+	}
+
+	outcome, err := l.session.Submit(ctx, session.Answer{
+		CardID:  study.CardID(state.CardID),
+		Attempt: state.Attempt,
+		Mode:    study.ModeTyping,
+		Text:    text,
+		Elapsed: l.clock.Now().Sub(time.Unix(state.ShownAt, 0)),
+	})
+	if err != nil {
+		return StepResult{}, err
+	}
+	if outcome.Duplicate {
+		if err := l.stale(ctx, u); err != nil {
+			return StepResult{}, err
+		}
+		return Done(), nil
+	}
+
+	if err := l.explainTyped(ctx, u, &state, &outcome, text); err != nil {
+		return StepResult{}, err
+	}
+
+	// Верный ответ ведёт дальше сам; после промаха человек нажмёт «дальше»,
+	// посмотрев на правильный перевод.
+	if !outcome.Correct || outcome.Match != lexicon.MatchExact {
+		return Done(), nil
+	}
+
+	waiting, err := l.showNext(ctx, u, outcome.CourseID, 0)
+	if err != nil {
+		return StepResult{}, err
+	}
+	if waiting == nil {
+		// Следующая карточка спрашивается кнопками или занятие кончилось.
+		return Done(), nil
+	}
+	// Ожидание ввода для новой карточки ставит движок: вернуть Done здесь
+	// значило бы стереть его сразу после установки.
+	return Next(stateTyping, *waiting), nil
+}
+
+// explainTyped показывает разбор напечатанного ответа.
+//
+// Разбор нужен даже при верном ответе с опечаткой: человек должен увидеть,
+// как пишется правильно, иначе он выучит свою опечатку.
+func (l *Learn) explainTyped(ctx context.Context, u *port.Update, state *typingState, outcome *session.Outcome, typed string) error {
 	localizer, err := l.localizer(ctx)
 	if err != nil {
 		return err
 	}
 
-	text, err := cardText(localizer, item)
+	item, err := l.session.Card(ctx, study.CardID(state.CardID))
 	if err != nil {
 		return err
-	}
-	if item.Mode == study.ModeChoice {
-		text += "\n\n" + mustText(localizer, "learn.choose_translation")
 	}
 
-	keyboard, err := l.questionKeyboard(localizer, item, l.clock.Now())
+	key := "learn.answer_typed_wrong"
+	switch {
+	case outcome.Match == lexicon.MatchExact:
+		key = "learn.answer_typed_correct"
+	case outcome.Correct:
+		key = "learn.answer_typed_typo"
+	}
+
+	text, err := localizer.T(key, port.Args{
+		"Term":        item.Lexeme.Term,
+		"Translation": strings.Join(outcome.Expected, ", "),
+		"Typed":       typed,
+	})
 	if err != nil {
 		return err
 	}
-	return l.render(ctx, u, messageID, text, keyboard)
+
+	var keyboard *port.Keyboard
+	if !outcome.Correct || outcome.Match != lexicon.MatchExact {
+		keyboard, err = NewKeyboard().Row(Button(
+			mustText(localizer, "learn.next"),
+			Callback{Action: actionNext, ID: int64(outcome.CourseID)},
+		)).Build()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Правим карточку на месте: вопрос превращается в разбор, и в чате
+	// не остаётся сообщения, на которое человек уже ответил.
+	return l.render(ctx, u, port.MessageID(state.MessageID), text, keyboard)
 }
 
 // questionKeyboard собирает кнопки вопроса под режим проверки.
@@ -327,7 +491,7 @@ func (l *Learn) rate(ctx context.Context, u *port.Update) error {
 		return l.stale(ctx, u)
 	}
 
-	return l.showNext(ctx, u, outcome.CourseID, u.Callback.MessageID)
+	return l.continueOutsideDialog(ctx, u, outcome.CourseID, u.Callback.MessageID)
 }
 
 // finish сообщает, что карточек больше нет.
@@ -359,8 +523,14 @@ func (l *Learn) stale(ctx context.Context, u *port.Update) error {
 
 // render правит сообщение, если оно известно, и отправляет новое, если нет.
 func (l *Learn) render(ctx context.Context, u *port.Update, messageID port.MessageID, text string, keyboard *port.Keyboard) error {
+	_, err := l.renderAndReturn(ctx, u, messageID, text, keyboard)
+	return err
+}
+
+// renderAndReturn делает то же и сообщает, какое сообщение теперь на экране.
+func (l *Learn) renderAndReturn(ctx context.Context, u *port.Update, messageID port.MessageID, text string, keyboard *port.Keyboard) (port.MessageID, error) {
 	if messageID != 0 {
-		return l.messenger.EditMessage(ctx, port.MessageEdit{
+		return messageID, l.messenger.EditMessage(ctx, port.MessageEdit{
 			ChatID:    u.Chat,
 			MessageID: messageID,
 			Text:      text,
@@ -368,12 +538,11 @@ func (l *Learn) render(ctx context.Context, u *port.Update, messageID port.Messa
 		})
 	}
 
-	_, err := l.messenger.SendMessage(ctx, port.OutgoingMessage{
+	return l.messenger.SendMessage(ctx, port.OutgoingMessage{
 		ChatID:   u.Chat,
 		Text:     text,
 		Keyboard: keyboard,
 	})
-	return err
 }
 
 func (l *Learn) localizer(ctx context.Context) (port.Localizer, error) {

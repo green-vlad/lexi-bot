@@ -20,6 +20,7 @@ type learnFixture struct {
 	messenger *editingMessenger
 	decks     *stubDeckSource
 	rand      *stubRand
+	sessions  *fakeSessions
 	cards     *stubCards
 	courses   *stubCourses
 	settings  *stubSettings
@@ -91,7 +92,15 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		t.Fatalf("session.New() вернул ошибку: %v", err)
 	}
 
-	handler, err := telegram.NewLearn(service, f.courses, f.messenger, testCatalog(t), clock)
+	f.sessions = newFakeSessions()
+	dialogs, err := telegram.NewDialogs(&telegram.DialogsConfig{
+		Sessions: f.sessions, Messenger: f.messenger, Clock: clock, Logger: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("NewDialogs() вернул ошибку: %v", err)
+	}
+
+	handler, err := telegram.NewLearn(service, f.courses, f.messenger, testCatalog(t), clock, dialogs)
 	if err != nil {
 		t.Fatalf("NewLearn() вернул ошибку: %v", err)
 	}
@@ -102,8 +111,11 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		telegram.AnswerCallbacks(f.messenger, quietLogger()),
 		telegram.Identify(users, quietLogger()),
 		telegram.Localize(testCatalog(t)),
+		dialogs.Middleware(),
 	)
 	handler.Register(f.router)
+	// Посторонняя команда, на которой проверяется прерывание ожидания ввода.
+	f.router.Command("help", telegram.Reply(f.messenger, "help.text"))
 	return f
 }
 
@@ -300,7 +312,7 @@ func TestLearnIgnoresStaleButtons(t *testing.T) {
 func TestLearnNeedsDependencies(t *testing.T) {
 	t.Parallel()
 
-	if _, err := telegram.NewLearn(nil, nil, nil, nil, nil); err == nil {
+	if _, err := telegram.NewLearn(nil, nil, nil, nil, nil, nil); err == nil {
 		t.Error("хендлер без зависимостей должен быть ошибкой")
 	}
 }
@@ -426,5 +438,162 @@ func TestLearnChoiceCountsSpeed(t *testing.T) {
 	// «хорошо» оставляет на шагах обучения.
 	if card.State != study.StateLearning {
 		t.Errorf("состояние = %v, ожидалось обучение: ответ не был быстрым", card.State)
+	}
+}
+
+func TestLearnTypingCorrectAnswer(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 3, study.ModeTyping)
+
+	f.send(t, "/learn")
+	text, buttons := f.screen(t)
+	if len(buttons) != 0 {
+		t.Errorf("в режиме ввода кнопок быть не должно: %v", buttons)
+	}
+	if !strings.Contains(text, "집") {
+		t.Errorf("на карточке %q, ожидалось слово", text)
+	}
+
+	// Бот перешёл в ожидание ответа: без этого он не отличил бы перевод
+	// от случайного сообщения.
+	if dialog, ok := f.sessions.current(t); !ok || dialog.State != "learn:typing" {
+		t.Fatalf("состояние диалога = %+v, ожидалось ожидание ввода", dialog)
+	}
+
+	f.send(t, "дом")
+
+	// Разбор показан правкой карточки, а следующее слово — новым сообщением.
+	if got := f.messenger.edits[len(f.messenger.edits)-1].Text; !strings.Contains(got, "Верно") {
+		t.Errorf("разбор = %q, ожидалось подтверждение", got)
+	}
+	text, _ = f.screen(t)
+	if !strings.Contains(text, "개") {
+		t.Errorf("после верного ответа %q, ожидалось следующее слово", text)
+	}
+
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if card.IsNew() {
+		t.Error("карточка не была отвечена")
+	}
+}
+
+func TestLearnTypingTypoShowsSpelling(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 3, study.ModeTyping)
+
+	f.send(t, "/learn")
+	// Первое слово — «дом»: опечатки в трёхбуквенных словах не прощаются
+	// (T-010), поэтому проверяем на следующем, подлиннее.
+	f.send(t, "дом")
+
+	text, _ := f.screen(t)
+	if !strings.Contains(text, "개") {
+		t.Fatalf("подготовка теста: на экране %q", text)
+	}
+
+	// Опечатка в один символ засчитывается, но человек должен увидеть,
+	// как пишется правильно, — иначе он выучит свою опечатку.
+	f.send(t, "сабака")
+
+	text, buttons := f.screen(t)
+	if !strings.Contains(text, "Почти") {
+		t.Errorf("разбор = %q, ожидалось «почти»", text)
+	}
+	if !strings.Contains(text, "собака") || !strings.Contains(text, "сабака") {
+		t.Errorf("разбор = %q, ожидались оба написания", text)
+	}
+	// После опечатки сессия ждёт нажатия «дальше»: проскакивать мимо
+	// правильного написания не нужно.
+	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "next:") {
+		t.Fatalf("кнопки = %v, ожидалась одна кнопка «дальше»", buttons)
+	}
+
+	f.press(t, buttons[0])
+	text, _ = f.screen(t)
+	if !strings.Contains(text, "물") {
+		t.Errorf("после «дальше» %q, ожидалось следующее слово", text)
+	}
+}
+
+func TestLearnTypingWrongAnswer(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 3, study.ModeTyping)
+
+	f.send(t, "/learn")
+	f.send(t, "совсем не то")
+
+	text, buttons := f.screen(t)
+	if !strings.Contains(text, "дом") {
+		t.Errorf("разбор = %q, ожидался правильный перевод", text)
+	}
+	if !strings.Contains(text, "совсем не то") {
+		t.Errorf("разбор = %q, ожидался введённый ответ", text)
+	}
+	if len(buttons) != 1 {
+		t.Fatalf("кнопки = %v", buttons)
+	}
+
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if card.LearnStep != 0 || card.State != study.StateLearning {
+		t.Errorf("состояние после промаха = %+v", card.CardState)
+	}
+}
+
+func TestLearnTypingIgnoresCommands(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 3, study.ModeTyping)
+
+	f.send(t, "/learn")
+	if _, ok := f.sessions.current(t); !ok {
+		t.Fatal("ожидание ответа не началось")
+	}
+
+	// Посторонняя команда во время ожидания ответом не считается: она
+	// прерывает ожидание и выполняется сама (PLAN §5).
+	f.send(t, "/help")
+
+	if _, ok := f.sessions.current(t); ok {
+		t.Error("команда должна прерывать ожидание ответа")
+	}
+
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if !card.IsNew() {
+		t.Error("команда не должна засчитываться ответом на карточку")
+	}
+}
+
+func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 3, study.ModeTyping)
+
+	f.send(t, "/learn")
+	f.send(t, "   ")
+
+	// Пустое сообщение ответом не считается: продолжаем ждать.
+	dialog, ok := f.sessions.current(t)
+	if !ok || dialog.State != "learn:typing" {
+		t.Errorf("состояние = %+v, ожидалось прежнее ожидание", dialog)
+	}
+
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if !card.IsNew() {
+		t.Error("пустое сообщение засчиталось ответом")
 	}
 }

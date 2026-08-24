@@ -180,7 +180,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
-	learn, err := telegram.NewLearn(learning, courses, transport, catalog, clock)
+	learn, err := telegram.NewLearn(learning, courses, transport, catalog, clock, dialogs)
 	if err != nil {
 		return nil, err
 	}

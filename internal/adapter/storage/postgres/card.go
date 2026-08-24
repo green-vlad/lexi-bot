@@ -85,6 +85,9 @@ func (r *CardRepo) IntroduceNew(ctx context.Context, q port.IntroduceQuery) ([]s
 		if remaining <= 0 {
 			return nil
 		}
+		if q.Batch > 0 && q.Batch < remaining {
+			remaining = q.Batch
+		}
 
 		// Слова берутся из колоды курса по возрастанию позиции — у встроенных
 		// колод это порядок частотности, у личной порядок добавления.

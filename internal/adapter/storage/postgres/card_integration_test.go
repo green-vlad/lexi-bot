@@ -460,3 +460,70 @@ func TestCountsByState(t *testing.T) {
 		t.Error("в ответе появилась фаза без карточек")
 	}
 }
+
+func TestApplyRejectsStaleVersion(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewCardRepo(pool)
+
+	f := newCourse(t, pool, 1)
+	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
+		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
+	}
+	card := cards[0]
+
+	outcome := func(at time.Time, expected time.Time) *port.ReviewOutcome {
+		t.Helper()
+
+		next := study.CardState{
+			State: study.StateReview, DueAt: at.AddDate(0, 0, 1),
+			IntervalDays: 1, EaseFactor: 2.5, Repetitions: 1,
+		}
+		review, err := study.NewReview(study.ReviewParams{
+			CardID: card.ID, RatedAt: at, Rating: study.RatingGood,
+			Mode: study.ModeChoice, IsCorrect: true, Prev: card.CardState, Next: next,
+		})
+		if err != nil {
+			t.Fatalf("NewReview() вернул ошибку: %v", err)
+		}
+		return &port.ReviewOutcome{
+			CardID: card.ID, State: next, Review: review,
+			UserID: f.user.ID, Day: testDay, ExpectedLastReviewedAt: expected,
+		}
+	}
+
+	// Первый ответ: карточку ещё не отвечали, версия нулевая.
+	if err := repo.Apply(ctx, outcome(testNow, time.Time{})); err != nil {
+		t.Fatalf("Apply() вернул ошибку: %v", err)
+	}
+
+	// Второе нажатие той же кнопки: версия та же, а карточка уже уехала.
+	// Условие по last_reviewed_at не даёт применить ответ дважды.
+	err = repo.Apply(ctx, outcome(testNow.Add(time.Second), time.Time{}))
+	if !errors.Is(err, port.ErrConflict) {
+		t.Errorf("повторный Apply() = %v, ожидалась ErrConflict", err)
+	}
+
+	var reviews int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM reviews").Scan(&reviews); err != nil {
+		t.Fatalf("подсчёт журнала не прошёл: %v", err)
+	}
+	if reviews != 1 {
+		t.Errorf("записей в журнале %d, ожидалась одна", reviews)
+	}
+	if _, done := counters(t, pool, f.course.ID); done != 1 {
+		t.Errorf("счётчик повторений = %d, ожидалась единица", done)
+	}
+
+	// А ответ на актуальную версию проходит.
+	saved, err := repo.ByID(ctx, card.ID)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if err := repo.Apply(ctx, outcome(testNow.Add(time.Minute), saved.LastReviewedAt)); err != nil {
+		t.Errorf("Apply() с актуальной версией = %v", err)
+	}
+}

@@ -154,6 +154,11 @@ func (r *CardRepo) Apply(ctx context.Context, outcome *port.ReviewOutcome) error
 	}
 
 	return r.inTx(ctx, func(tx queryer) error {
+		// Условие по last_reviewed_at — это проверка версии: если на карточку
+		// успели ответить после того, как её показали, запрос никого
+		// не заденет. Так двойное нажатие кнопки не двигает карточку дважды,
+		// причём проверка и запись происходят одним действием — между ними
+		// нечему вклиниться.
 		const update = `
 			UPDATE cards
 			SET state            = $2,
@@ -164,15 +169,19 @@ func (r *CardRepo) Apply(ctx context.Context, outcome *port.ReviewOutcome) error
 			    lapses           = $7,
 			    learn_step       = $8,
 			    last_reviewed_at = $9
-			WHERE id = $1`
+			WHERE id = $1
+			  AND last_reviewed_at IS NOT DISTINCT FROM $10`
 
 		state := outcome.State
 		tag, err := tx.Exec(ctx, update,
 			int64(outcome.CardID), state.State.String(), state.DueAt, state.IntervalDays,
 			state.EaseFactor, state.Repetitions, state.Lapses, state.LearnStep,
-			outcome.Review.RatedAt)
-		if err := requireRows(op, tag, err); err != nil {
-			return err
+			outcome.Review.RatedAt, nullableTime(outcome.ExpectedLastReviewedAt))
+		if err != nil {
+			return wrap(op, err)
+		}
+		if tag.RowsAffected() == 0 {
+			return r.explainMiss(ctx, tx, op, outcome.CardID)
 		}
 
 		if err := insertReview(ctx, tx, outcome.UserID, &outcome.Review); err != nil {
@@ -225,6 +234,30 @@ func (r *CardRepo) CountsByState(ctx context.Context, courseID study.CourseID) (
 		return nil, wrap(op, err)
 	}
 	return out, nil
+}
+
+// explainMiss объясняет, почему обновление никого не задело: карточки нет
+// или на неё уже ответили. Лишний запрос делается только на этом редком
+// пути, зато сценарий получает разные ошибки на разные случаи.
+func (r *CardRepo) explainMiss(ctx context.Context, tx queryer, op string, cardID study.CardID) error {
+	var exists bool
+	err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM cards WHERE id = $1)", int64(cardID)).Scan(&exists)
+	if err != nil {
+		return wrap(op, err)
+	}
+	if exists {
+		return fmt.Errorf("%s: %w (на карточку %d уже ответили)", op, port.ErrConflict, cardID)
+	}
+	return fmt.Errorf("%s: %w", op, port.ErrNotFound)
+}
+
+// nullableTime переводит нулевое время в NULL: у карточки, которую ещё
+// не отвечали, last_reviewed_at пуст, и сравнивать его нужно с NULL.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
 
 // lockCounter берёт строку дневного счётчика под блокировку, создавая её

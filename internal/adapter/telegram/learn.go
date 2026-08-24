@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
@@ -30,10 +32,11 @@ type Learn struct {
 	courses   port.CourseRepo
 	messenger port.Messenger
 	catalog   port.Catalog
+	clock     port.Clock
 }
 
 // NewLearn создаёт хендлер учебной сессии.
-func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.Messenger, catalog port.Catalog) (*Learn, error) {
+func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.Messenger, catalog port.Catalog, clock port.Clock) (*Learn, error) {
 	switch {
 	case service == nil:
 		return nil, errors.New("сессии нужен сценарий")
@@ -43,8 +46,10 @@ func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.
 		return nil, errors.New("сессии нужен мессенджер")
 	case catalog == nil:
 		return nil, errors.New("сессии нужен каталог переводов")
+	case clock == nil:
+		return nil, errors.New("сессии нужны часы")
 	}
-	return &Learn{session: service, courses: courses, messenger: messenger, catalog: catalog}, nil
+	return &Learn{session: service, courses: courses, messenger: messenger, catalog: catalog, clock: clock}, nil
 }
 
 // Register привязывает команду и кнопки к роутеру.
@@ -53,6 +58,87 @@ func (l *Learn) Register(router *Router) {
 	router.CallbackAction(actionNext, port.UpdateHandlerFunc(l.next))
 	router.CallbackAction(actionShow, port.UpdateHandlerFunc(l.show))
 	router.CallbackAction(actionRate, port.UpdateHandlerFunc(l.rate))
+	router.CallbackAction(actionAnswer, port.UpdateHandlerFunc(l.answer))
+}
+
+// answer принимает выбранный вариант.
+func (l *Learn) answer(ctx context.Context, u *port.Update) error {
+	callback, ok := decodeCallback(u.Callback.Data)
+	if !ok {
+		return nil
+	}
+
+	correct, rest, _ := strings.Cut(callback.Param, ":")
+	attempt, shown, _ := strings.Cut(rest, ":")
+
+	outcome, err := l.session.Submit(ctx, session.Answer{
+		CardID:  study.CardID(callback.ID),
+		Attempt: attempt,
+		Mode:    study.ModeChoice,
+		Correct: correct == "1",
+		Elapsed: l.elapsed(shown),
+	})
+	if err != nil {
+		return err
+	}
+	if outcome.Duplicate {
+		return l.stale(ctx, u)
+	}
+
+	if outcome.Correct {
+		// Верный ответ не нуждается в разборе: сразу следующее слово.
+		return l.showNext(ctx, u, outcome.CourseID, u.Callback.MessageID)
+	}
+	return l.explainMiss(ctx, u, &outcome)
+}
+
+// explainMiss показывает правильный ответ и кнопку «дальше».
+//
+// Промах — единственное место, где стоит задержаться: человеку нужно
+// увидеть верный перевод, а не проскочить мимо него к следующей карточке.
+func (l *Learn) explainMiss(ctx context.Context, u *port.Update, outcome *session.Outcome) error {
+	localizer, err := l.localizer(ctx)
+	if err != nil {
+		return err
+	}
+
+	item, err := l.session.Card(ctx, outcome.CardID)
+	if err != nil {
+		return err
+	}
+
+	text, err := localizer.T("learn.answer_wrong", port.Args{
+		"Term":        item.Lexeme.Term,
+		"Translation": strings.Join(outcome.Expected, ", "),
+	})
+	if err != nil {
+		return err
+	}
+
+	keyboard, err := NewKeyboard().Row(Button(
+		mustText(localizer, "learn.next"),
+		Callback{Action: actionNext, ID: int64(outcome.CourseID)},
+	)).Build()
+	if err != nil {
+		return err
+	}
+	return l.render(ctx, u, u.Callback.MessageID, text, keyboard)
+}
+
+// elapsed восстанавливает, сколько человек думал над ответом.
+// Испорченный или отсутствующий момент показа означает «не измеряли»:
+// такой ответ не будет считаться быстрым, и это правильнее, чем выдать
+// «легко» за ответ неизвестной длительности.
+func (l *Learn) elapsed(shown string) time.Duration {
+	at, ok := decodeTime(shown)
+	if !ok {
+		return 0
+	}
+	elapsed := l.clock.Now().Sub(at)
+	if elapsed < 0 {
+		return 0
+	}
+	return elapsed
 }
 
 // start начинает занятие.
@@ -108,21 +194,53 @@ func (l *Learn) showCard(ctx context.Context, u *port.Update, messageID port.Mes
 	if err != nil {
 		return err
 	}
+	if item.Mode == study.ModeChoice {
+		text += "\n\n" + mustText(localizer, "learn.choose_translation")
+	}
 
-	keyboard, err := l.questionKeyboard(localizer, item)
+	keyboard, err := l.questionKeyboard(localizer, item, l.clock.Now())
 	if err != nil {
 		return err
 	}
 	return l.render(ctx, u, messageID, text, keyboard)
 }
 
-// questionKeyboard собирает кнопки вопроса. Пока режим один; выбор из
-// четырёх и ввод текстом добавятся в T-032 и T-033.
-func (l *Learn) questionKeyboard(localizer port.Localizer, item *session.Item) (*port.Keyboard, error) {
+// questionKeyboard собирает кнопки вопроса под режим проверки.
+// Ввод текстом добавится в T-033.
+func (l *Learn) questionKeyboard(localizer port.Localizer, item *session.Item, shownAt time.Time) (*port.Keyboard, error) {
+	if item.Mode == study.ModeChoice {
+		return l.choiceKeyboard(item, shownAt)
+	}
 	return NewKeyboard().Row(Button(
 		mustText(localizer, "learn.show_translation"),
 		Callback{Action: actionShow, ID: int64(item.Card.ID), Param: session.Attempt(&item.Card)},
 	)).Build()
+}
+
+// choiceKeyboard собирает варианты ответа.
+//
+// В кнопке едет признак правильности, а не номер варианта: сами варианты
+// нигде не хранятся, и восстановить по номеру, что было под ним, к моменту
+// нажатия невозможно. Подделать кнопку теоретически можно, но обманет этим
+// человек только себя — оценка ставится его же карточке.
+func (l *Learn) choiceKeyboard(item *session.Item, shownAt time.Time) (*port.Keyboard, error) {
+	attempt := session.Attempt(&item.Card)
+
+	buttons := make([]KeyboardButton, 0, len(item.Options))
+	for i, option := range item.Options {
+		correct := "0"
+		if i == item.Correct {
+			correct = "1"
+		}
+		buttons = append(buttons, Button(option, Callback{
+			Action: actionAnswer,
+			ID:     int64(item.Card.ID),
+			// Признак, токен попытки и момент показа: по последнему
+			// считается, насколько быстро человек ответил.
+			Param: correct + ":" + attempt + ":" + encodeTime(shownAt),
+		}))
+	}
+	return NewKeyboard().Grid(2, buttons...).Build()
 }
 
 // show открывает перевод и предлагает оценить себя.
@@ -283,6 +401,21 @@ func translationTexts(translations []lexicon.Translation) []string {
 		out = append(out, t.Text)
 	}
 	return out
+}
+
+// encodeTime и decodeTime переводят момент в компактную строку и обратно.
+// Тридцатишестеричные секунды эпохи занимают семь байт вместо десяти —
+// в callback_data это заметная разница.
+func encodeTime(at time.Time) string {
+	return strconv.FormatInt(at.Unix(), 36)
+}
+
+func decodeTime(encoded string) (time.Time, bool) {
+	seconds, err := strconv.ParseInt(encoded, 36, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(seconds, 0), true
 }
 
 // parseRating превращает разбор оценки в ответ «да или нет»: хендлеру

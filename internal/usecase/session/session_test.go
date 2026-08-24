@@ -220,6 +220,8 @@ func (f *fakeLexemes) Translations(_ context.Context, ids []lexicon.LexemeID, _ 
 // fixture — курс с колодой из нескольких слов.
 type fixture struct {
 	service  *session.Service
+	decks    *fakeDecks
+	rand     *fakeRand
 	cards    *fakeCards
 	counters *fakeCounters
 	settings *fakeSettings
@@ -246,12 +248,16 @@ func newFixture(t *testing.T, words int) *fixture {
 	}
 
 	f.cards = &fakeCards{pool: pool, counters: f.counters}
+	f.decks = &fakeDecks{}
+	f.rand = &fakeRand{}
 	f.courses = &fakeCourses{course: study.Course{
 		ID: courseID, UserID: 42, DeckID: 7, TranslationLang: langRU, Status: study.CourseActive,
 	}}
 	f.settings = &fakeSettings{settings: user.DefaultSettings(user.MustParseTimezone("Asia/Seoul"))}
 
 	service, err := session.New(&session.Deps{
+		Decks:     f.decks,
+		Rand:      f.rand,
 		Scheduler: mustScheduler(t),
 		Resolver:  study.DefaultRatingResolver(),
 		Cards:     f.cards,
@@ -539,4 +545,186 @@ func mustScheduler(t *testing.T) study.Scheduler {
 		t.Fatalf("NewSM2() вернул ошибку: %v", err)
 	}
 	return scheduler
+}
+
+// fakeDecks — колода для подбора ложных вариантов. Пустой список означает
+// «в колоде больше ничего нет», и это отдельный случай, который сессия
+// обязана пережить.
+type fakeDecks struct {
+	distractors []lexicon.Translation
+}
+
+func (f *fakeDecks) Distractors(_ context.Context, q port.DistractorQuery) ([]lexicon.Translation, error) {
+	out := make([]lexicon.Translation, 0, len(f.distractors))
+	for _, tr := range f.distractors {
+		if tr.LexemeID == q.Exclude {
+			continue
+		}
+		if q.Limit > 0 && len(out) >= q.Limit {
+			break
+		}
+		out = append(out, tr)
+	}
+	return out, nil
+}
+
+func (f *fakeDecks) Languages(context.Context) ([]lexicon.Language, error) { return nil, nil }
+func (f *fakeDecks) TranslationLanguages(context.Context, lexicon.DeckID) ([]lexicon.Language, error) {
+	return nil, nil
+}
+func (f *fakeDecks) Builtin(context.Context, lexicon.Language) ([]lexicon.Deck, error) {
+	return nil, nil
+}
+func (f *fakeDecks) ByID(context.Context, lexicon.DeckID) (lexicon.Deck, error) {
+	return lexicon.Deck{}, port.ErrNotFound
+}
+func (f *fakeDecks) ByCode(context.Context, string) (lexicon.Deck, error) {
+	return lexicon.Deck{}, port.ErrNotFound
+}
+func (f *fakeDecks) EnsurePersonal(context.Context, int64, lexicon.Language, string) (lexicon.Deck, error) {
+	return lexicon.Deck{}, nil
+}
+func (f *fakeDecks) AddItems(context.Context, []lexicon.DeckItem) error { return nil }
+func (f *fakeDecks) Items(context.Context, lexicon.DeckID, int, int) ([]lexicon.DeckItem, error) {
+	return nil, nil
+}
+
+func TestOptionsForChoiceMode(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 5)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeChoice}
+	f.decks.distractors = []lexicon.Translation{
+		{LexemeID: 2, Lang: langRU, Text: "собака", IsPrimary: true},
+		{LexemeID: 3, Lang: langRU, Text: "вода", IsPrimary: true},
+		{LexemeID: 4, Lang: langRU, Text: "огонь", IsPrimary: true},
+		{LexemeID: 5, Lang: langRU, Text: "гора", IsPrimary: true},
+	}
+
+	item, reason := f.next(t)
+	if reason != session.ReasonNone {
+		t.Fatalf("причина = %v", reason)
+	}
+	if item.Mode != study.ModeChoice {
+		t.Fatalf("режим = %v, ожидался выбор", item.Mode)
+	}
+	if len(item.Options) != session.ChoiceOptions {
+		t.Fatalf("вариантов %d, ожидалось %d: %v", len(item.Options), session.ChoiceOptions, item.Options)
+	}
+
+	// Правильный ответ на месте и ровно один.
+	if item.Correct < 0 || item.Correct >= len(item.Options) {
+		t.Fatalf("указатель на правильный вариант = %d", item.Correct)
+	}
+	if item.Options[item.Correct] != "перевод" {
+		t.Errorf("правильный вариант = %q", item.Options[item.Correct])
+	}
+
+	seen := map[string]int{}
+	for _, option := range item.Options {
+		seen[option]++
+	}
+	if seen["перевод"] != 1 {
+		t.Errorf("правильный ответ встречается %d раз", seen["перевод"])
+	}
+	for option, count := range seen {
+		if count > 1 {
+			t.Errorf("вариант %q повторяется %d раз", option, count)
+		}
+	}
+}
+
+func TestOptionsSkipDuplicatesOfCorrectAnswer(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 5)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeChoice}
+	// Ложные варианты, совпадающие с правильным после нормализации:
+	// показать их рядом значило бы предложить два правильных ответа.
+	f.decks.distractors = []lexicon.Translation{
+		{LexemeID: 2, Lang: langRU, Text: "Перевод", IsPrimary: true},
+		{LexemeID: 3, Lang: langRU, Text: "перевод.", IsPrimary: true},
+		{LexemeID: 4, Lang: langRU, Text: "вода", IsPrimary: true},
+		{LexemeID: 5, Lang: langRU, Text: "огонь", IsPrimary: true},
+	}
+
+	item, _ := f.next(t)
+	// Годных ложных вариантов осталось два, и вариантов вышло три вместо
+	// четырёх: это лучше, чем показать один и тот же ответ дважды.
+	if len(item.Options) != 3 {
+		t.Fatalf("вариантов %d: %v", len(item.Options), item.Options)
+	}
+	if item.Mode != study.ModeChoice {
+		t.Errorf("режим = %v: трёх вариантов достаточно для выбора", item.Mode)
+	}
+	for i, option := range item.Options {
+		if i == item.Correct {
+			continue
+		}
+		if lexicon.Normalize(option, langRU) == "перевод" {
+			t.Errorf("вариант %q совпадает с правильным ответом", option)
+		}
+	}
+}
+
+func TestOptionsFallBackToRecall(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 5)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeChoice}
+	// Ложных вариантов почти нет: колода бедная или переводов не хватает.
+	f.decks.distractors = []lexicon.Translation{
+		{LexemeID: 2, Lang: langRU, Text: "собака", IsPrimary: true},
+	}
+
+	item, _ := f.next(t)
+	if item.Mode != study.ModeRecall {
+		t.Errorf("режим = %v, ожидался откат к узнаванию", item.Mode)
+	}
+	if len(item.Options) != 0 {
+		t.Errorf("варианты = %v, при откате их быть не должно", item.Options)
+	}
+}
+
+func TestOptionsAreShuffled(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 5)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeChoice}
+	f.decks.distractors = []lexicon.Translation{
+		{LexemeID: 2, Lang: langRU, Text: "собака", IsPrimary: true},
+		{LexemeID: 3, Lang: langRU, Text: "вода", IsPrimary: true},
+		{LexemeID: 4, Lang: langRU, Text: "огонь", IsPrimary: true},
+	}
+	// Источник случайности переворачивает список: правильный ответ,
+	// который собирается первым, обязан уехать с первого места вместе
+	// с указателем на него.
+	f.rand.shuffle = func(n int, swap func(i, j int)) {
+		for i, j := 0, n-1; i < j; i, j = i+1, j-1 {
+			swap(i, j)
+		}
+	}
+
+	item, _ := f.next(t)
+	if item.Correct == 0 {
+		t.Error("правильный вариант остался первым: перемешивание не сработало")
+	}
+	if item.Options[item.Correct] != "перевод" {
+		t.Errorf("указатель на правильный вариант разошёлся с самим вариантом: %+v", item)
+	}
+}
+
+// fakeRand — управляемый источник случайности: по умолчанию не перемешивает
+// ничего, чтобы тесты знали, где что лежит.
+type fakeRand struct {
+	shuffle func(n int, swap func(i, j int))
+}
+
+func (f *fakeRand) Float64() float64 { return 0.5 }
+func (f *fakeRand) IntN(int) int     { return 0 }
+
+func (f *fakeRand) Shuffle(n int, swap func(i, j int)) {
+	if f.shuffle != nil {
+		f.shuffle(n, swap)
+	}
 }

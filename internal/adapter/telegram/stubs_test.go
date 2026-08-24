@@ -196,3 +196,51 @@ func (s *stubLexemes) Translations(_ context.Context, ids []lexicon.LexemeID, _ 
 	}
 	return out, nil
 }
+
+// stubDeckSource отдаёт переводы других слов колоды как ложные варианты.
+type stubDeckSource struct {
+	translations map[lexicon.LexemeID][]lexicon.Translation
+}
+
+func (s *stubDeckSource) Distractors(_ context.Context, q port.DistractorQuery) ([]lexicon.Translation, error) {
+	var out []lexicon.Translation
+	for id, list := range s.translations {
+		if id == q.Exclude || len(list) == 0 {
+			continue
+		}
+		if q.Limit > 0 && len(out) >= q.Limit {
+			break
+		}
+		out = append(out, list[0])
+	}
+	return out, nil
+}
+
+func (s *stubDeckSource) Languages(context.Context) ([]lexicon.Language, error) { return nil, nil }
+func (s *stubDeckSource) TranslationLanguages(context.Context, lexicon.DeckID) ([]lexicon.Language, error) {
+	return nil, nil
+}
+func (s *stubDeckSource) Builtin(context.Context, lexicon.Language) ([]lexicon.Deck, error) {
+	return nil, nil
+}
+func (s *stubDeckSource) ByID(context.Context, lexicon.DeckID) (lexicon.Deck, error) {
+	return lexicon.Deck{}, port.ErrNotFound
+}
+func (s *stubDeckSource) ByCode(context.Context, string) (lexicon.Deck, error) {
+	return lexicon.Deck{}, port.ErrNotFound
+}
+func (s *stubDeckSource) EnsurePersonal(context.Context, int64, lexicon.Language, string) (lexicon.Deck, error) {
+	return lexicon.Deck{}, nil
+}
+func (s *stubDeckSource) AddItems(context.Context, []lexicon.DeckItem) error { return nil }
+func (s *stubDeckSource) Items(context.Context, lexicon.DeckID, int, int) ([]lexicon.DeckItem, error) {
+	return nil, nil
+}
+
+// stubRand ничего не перемешивает: в тестах важно знать, где правильный
+// вариант, а перемешивание проверяется отдельно.
+type stubRand struct{}
+
+func (stubRand) Float64() float64            { return 0.5 }
+func (stubRand) IntN(n int) int              { return 0 }
+func (stubRand) Shuffle(int, func(i, j int)) {}

@@ -59,8 +59,9 @@ func (f ClockFunc) Now() time.Time { return f() }
 type Rand interface {
 	// Float64 возвращает число в промежутке [0, 1).
 	Float64() float64
-	// Intn возвращает число в промежутке [0, n).
-	Intn(n int) int
+	// IntN возвращает число в промежутке [0, n). Имя как в math/rand/v2,
+	// чтобы генератор из стандартной библиотеки подходил без переходника.
+	IntN(n int) int
 	// Shuffle перемешивает n элементов, меняя их местами через swap.
 	Shuffle(n int, swap func(i, j int))
 }

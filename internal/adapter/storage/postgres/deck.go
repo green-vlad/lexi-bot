@@ -25,6 +25,64 @@ var _ port.DeckRepo = (*DeckRepo)(nil)
 
 const deckColumns = "id, code, COALESCE(owner_user_id, 0), lang_code, title, description, size"
 
+// Distractors возвращает переводы других слов колоды.
+//
+// Сортировка сначала по совпадению части речи, потом случайная: варианты
+// одной части речи делают выбор честным, но если их не набралось, лучше
+// показать любые, чем меньше четырёх кнопок.
+//
+// Берутся только основные значения: показывать в вариантах «жилище» там,
+// где основной перевод «дом», значит спрашивать не то, что учили.
+func (r *DeckRepo) Distractors(ctx context.Context, q port.DistractorQuery) ([]lexicon.Translation, error) {
+	const op = "подобрать ложные варианты"
+
+	if q.Limit <= 0 {
+		return nil, nil
+	}
+
+	const query = `
+		SELECT t.id, t.lexeme_id, t.lang_code, t.text, t.is_primary, t.note
+		FROM deck_items di
+		JOIN lexemes l ON l.id = di.lexeme_id
+		JOIN translations t ON t.lexeme_id = l.id AND t.lang_code = $2 AND t.is_primary
+		WHERE di.deck_id = $1 AND di.lexeme_id <> $3
+		ORDER BY (l.pos = $4) DESC, random()
+		LIMIT $5`
+
+	rows, err := r.db(ctx).Query(ctx, query,
+		int64(q.DeckID), q.Lang.String(), int64(q.Exclude), string(q.POS), q.Limit)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []lexicon.Translation
+	for rows.Next() {
+		var (
+			tr       lexicon.Translation
+			id       int64
+			lexemeID int64
+			langCode string
+		)
+		if err := rows.Scan(&id, &lexemeID, &langCode, &tr.Text, &tr.IsPrimary, &tr.Note); err != nil {
+			return nil, wrap(op, err)
+		}
+
+		lang, err := lexicon.ParseLanguage(langCode)
+		if err != nil {
+			return nil, wrap(op, err)
+		}
+		tr.ID = lexicon.TranslationID(id)
+		tr.LexemeID = lexicon.LexemeID(lexemeID)
+		tr.Lang = lang
+		out = append(out, tr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(op, err)
+	}
+	return out, nil
+}
+
 // Languages возвращает языки, для которых есть встроенные колоды.
 func (r *DeckRepo) Languages(ctx context.Context) ([]lexicon.Language, error) {
 	const op = "получить языки изучения"

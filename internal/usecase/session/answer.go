@@ -45,6 +45,8 @@ type Outcome struct {
 	// CourseID — курс отвеченной карточки: по нему сессия продолжается
 	// следующей карточкой, и спрашивать его отдельно незачем.
 	CourseID study.CourseID
+	// CardID — сама карточка: разбор промаха показывает её слово.
+	CardID study.CardID
 	// Duplicate означает, что этот ответ уже был учтён, и ничего
 	// не изменилось. Обычно это второе нажатие той же кнопки.
 	Duplicate bool
@@ -150,6 +152,7 @@ func (s *Service) Submit(ctx context.Context, answer Answer) (Outcome, error) {
 		Expected: accepted,
 		Card:     next,
 		CourseID: card.CourseID,
+		CardID:   card.ID,
 	}, nil
 }
 

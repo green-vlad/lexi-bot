@@ -163,13 +163,16 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	}
 
 	courses := storage.NewCourseRepo(pool)
+	clock := port.ClockFunc(time.Now)
 	learning, err := session.New(&session.Deps{
 		Cards:     storage.NewCardRepo(pool),
 		Counters:  storage.NewCounterRepo(pool),
 		Courses:   courses,
 		Settings:  storage.NewSettingsRepo(pool),
 		Lexemes:   storage.NewLexemeRepo(pool),
-		Clock:     port.ClockFunc(time.Now),
+		Decks:     storage.NewDeckRepo(pool),
+		Clock:     clock,
+		Rand:      jitter,
 		Scheduler: scheduler,
 		Resolver:  study.DefaultRatingResolver(),
 	})
@@ -177,7 +180,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
-	learn, err := telegram.NewLearn(learning, courses, transport, catalog)
+	learn, err := telegram.NewLearn(learning, courses, transport, catalog, clock)
 	if err != nil {
 		return nil, err
 	}

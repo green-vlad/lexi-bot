@@ -18,6 +18,8 @@ import (
 type learnFixture struct {
 	router    *telegram.Router
 	messenger *editingMessenger
+	decks     *stubDeckSource
+	rand      *stubRand
 	cards     *stubCards
 	courses   *stubCourses
 	settings  *stubSettings
@@ -63,19 +65,25 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		translations[id] = []lexicon.Translation{{LexemeID: id, Lang: langRU, Text: meanings[i], IsPrimary: true}}
 	}
 	f.cards = newStubCards(pool, course.ID)
+	f.decks = &stubDeckSource{translations: translations}
+	// Порядок вариантов фиксирован: тест должен знать, где правильный.
+	f.rand = &stubRand{}
 
 	scheduler, err := study.NewSM2(study.DefaultSM2Config(), nil)
 	if err != nil {
 		t.Fatalf("NewSM2() вернул ошибку: %v", err)
 	}
 
+	clock := port.ClockFunc(func() time.Time { return f.now })
 	service, err := session.New(&session.Deps{
 		Cards:     f.cards,
+		Decks:     f.decks,
+		Rand:      f.rand,
 		Counters:  f.cards.counters,
 		Courses:   f.courses,
 		Settings:  f.settings,
 		Lexemes:   &stubLexemes{lexemes: lexemes, translations: translations},
-		Clock:     port.ClockFunc(func() time.Time { return f.now }),
+		Clock:     clock,
 		Scheduler: scheduler,
 		Resolver:  study.DefaultRatingResolver(),
 	})
@@ -83,7 +91,7 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		t.Fatalf("session.New() вернул ошибку: %v", err)
 	}
 
-	handler, err := telegram.NewLearn(service, f.courses, f.messenger, testCatalog(t))
+	handler, err := telegram.NewLearn(service, f.courses, f.messenger, testCatalog(t), clock)
 	if err != nil {
 		t.Fatalf("NewLearn() вернул ошибку: %v", err)
 	}
@@ -292,7 +300,131 @@ func TestLearnIgnoresStaleButtons(t *testing.T) {
 func TestLearnNeedsDependencies(t *testing.T) {
 	t.Parallel()
 
-	if _, err := telegram.NewLearn(nil, nil, nil, nil); err == nil {
+	if _, err := telegram.NewLearn(nil, nil, nil, nil, nil); err == nil {
 		t.Error("хендлер без зависимостей должен быть ошибкой")
+	}
+}
+
+func TestLearnChoiceMode(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 4, study.ModeChoice)
+
+	f.send(t, "/learn")
+
+	text, buttons := f.screen(t)
+	if !strings.Contains(text, "집") {
+		t.Errorf("на карточке %q, ожидалось слово", text)
+	}
+	if len(buttons) != 4 {
+		t.Fatalf("вариантов %d, ожидалось четыре: %v", len(buttons), buttons)
+	}
+
+	// Правильный вариант ровно один.
+	correct := 0
+	for _, data := range buttons {
+		if strings.HasPrefix(data, "ans:1:1:") {
+			correct++
+		}
+	}
+	if correct != 1 {
+		t.Fatalf("правильных вариантов %d, ожидался один: %v", correct, buttons)
+	}
+
+	// Верный ответ ведёт сразу к следующему слову — разбирать нечего.
+	for _, data := range buttons {
+		if strings.HasPrefix(data, "ans:1:1:") {
+			f.press(t, data)
+		}
+	}
+	text, _ = f.screen(t)
+	if !strings.Contains(text, "개") {
+		t.Errorf("после верного ответа %q, ожидалось следующее слово", text)
+	}
+}
+
+func TestLearnChoiceExplainsMiss(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 4, study.ModeChoice)
+
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+
+	// Промах: показываем верный перевод и ждём нажатия «дальше».
+	// Проскочить мимо правильного ответа человек не должен.
+	for _, data := range buttons {
+		if strings.HasPrefix(data, "ans:1:0:") {
+			f.press(t, data)
+			break
+		}
+	}
+
+	text, next := f.screen(t)
+	if !strings.Contains(text, "дом") {
+		t.Errorf("разбор = %q, ожидался правильный перевод", text)
+	}
+	if len(next) != 1 || !strings.HasPrefix(next[0], "next:") {
+		t.Fatalf("кнопки разбора = %v, ожидалась одна кнопка «дальше»", next)
+	}
+
+	f.press(t, next[0])
+	text, _ = f.screen(t)
+	if !strings.Contains(text, "개") {
+		t.Errorf("после «дальше» %q, ожидалось следующее слово", text)
+	}
+
+	// Промах записан провалом: карточка вернётся скоро.
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	if card.State != study.StateLearning || card.LearnStep != 0 {
+		t.Errorf("состояние после промаха = %+v", card.CardState)
+	}
+}
+
+func TestLearnChoiceFallsBackWhenDeckIsTiny(t *testing.T) {
+	t.Parallel()
+
+	// В колоде одно слово: ложных вариантов взять негде, и выбор из одной
+	// кнопки был бы издевательством. Спрашиваем узнаванием.
+	f := newLearnFixture(t, 1, study.ModeChoice)
+
+	f.send(t, "/learn")
+
+	_, buttons := f.screen(t)
+	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "show:") {
+		t.Fatalf("кнопки = %v, ожидался переход к показу перевода", buttons)
+	}
+}
+
+func TestLearnChoiceCountsSpeed(t *testing.T) {
+	t.Parallel()
+
+	f := newLearnFixture(t, 4, study.ModeChoice)
+
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+
+	var correct string
+	for _, data := range buttons {
+		if strings.HasPrefix(data, "ans:1:1:") {
+			correct = data
+		}
+	}
+
+	// Человек думал долго: ответ верный, но не «лёгкий».
+	f.now = f.now.Add(30 * time.Second)
+	f.press(t, correct)
+
+	card, err := f.cards.ByID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ByID() вернул ошибку: %v", err)
+	}
+	// «Легко» у новой карточки отправило бы её сразу на четыре дня;
+	// «хорошо» оставляет на шагах обучения.
+	if card.State != study.StateLearning {
+		t.Errorf("состояние = %v, ожидалось обучение: ответ не был быстрым", card.State)
 	}
 }

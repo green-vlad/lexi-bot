@@ -32,8 +32,28 @@ type LexemeRepo interface {
 	Translations(ctx context.Context, ids []lexicon.LexemeID, lang lexicon.Language) (map[lexicon.LexemeID][]lexicon.Translation, error)
 }
 
+// DistractorQuery — запрос ложных вариантов для режима выбора.
+type DistractorQuery struct {
+	DeckID lexicon.DeckID
+	// Lang — язык перевода: варианты показываются на нём же, что и ответ.
+	Lang lexicon.Language
+	// POS — часть речи правильного ответа. Совпадение желательно, но
+	// не обязательно: выбор между четырьмя существительными сложнее
+	// и честнее, чем между существительным и тремя глаголами, где
+	// правильный вариант виден по форме слова.
+	POS lexicon.PartOfSpeech
+	// Exclude — слово, для которого подбираются варианты: его собственный
+	// перевод ложным быть не может.
+	Exclude lexicon.LexemeID
+	Limit   int
+}
+
 // DeckRepo хранит колоды и их состав.
 type DeckRepo interface {
+	// Distractors возвращает переводы других слов колоды — из них
+	// собираются ложные варианты ответа.
+	Distractors(ctx context.Context, q DistractorQuery) ([]lexicon.Translation, error)
+
 	// Languages возвращает языки, для которых есть встроенные колоды:
 	// из них состоит первый вопрос онбординга. Спрашивать по справочнику
 	// языков нельзя — там есть языки, учить которые пока нечем.

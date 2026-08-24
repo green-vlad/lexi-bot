@@ -162,6 +162,30 @@ func (s *Service) Next(ctx context.Context, courseID study.CourseID) (Item, Reas
 	return s.prepare(ctx, &course, &settings, &introduced[0])
 }
 
+// Card возвращает уже показанную карточку, подготовленную заново.
+//
+// Нужна там, где пользователь нажал кнопку под старым сообщением: в кнопке
+// есть только идентификатор карточки, а показать надо слово с переводами.
+func (s *Service) Card(ctx context.Context, cardID study.CardID) (Item, error) {
+	card, err := s.deps.Cards.ByID(ctx, cardID)
+	if err != nil {
+		return Item{}, fmt.Errorf("найти карточку: %w", err)
+	}
+
+	course, err := s.deps.Courses.ByID(ctx, card.CourseID)
+	if err != nil {
+		return Item{}, fmt.Errorf("найти курс: %w", err)
+	}
+
+	settings, err := s.deps.Settings.Get(ctx, user.ID(course.UserID))
+	if err != nil {
+		return Item{}, fmt.Errorf("прочитать настройки: %w", err)
+	}
+
+	item, _, err := s.prepare(ctx, &course, &settings, &card)
+	return item, err
+}
+
 // prepare достаёт слово и переводы и выбирает режим проверки.
 func (s *Service) prepare(ctx context.Context, course *study.Course, settings *user.Settings, card *study.Card) (Item, Reason, error) {
 	lexemes, err := s.deps.Lexemes.ByIDs(ctx, []lexicon.LexemeID{card.LexemeID})

@@ -89,3 +89,45 @@ other = "friend"
 
 [language.choose]
 other = "Which language should I speak?"
+
+[learn.no_course]
+other = "First choose what to learn: /start"
+
+[learn.card]
+other = "{{.Term}}"
+
+[learn.card_with_reading]
+other = "{{.Term}}\n{{.Reading}}"
+
+[learn.show_translation]
+other = "Show translation"
+
+[learn.rate_again]
+other = "Forgot"
+
+[learn.rate_hard]
+other = "Barely"
+
+[learn.rate_good]
+other = "Knew it"
+
+[learn.rate_easy]
+other = "Easy"
+
+[learn.revealed]
+other = "{{.Term}} — {{.Translation}}\n\nHow did it go?"
+
+[learn.next]
+other = "Next →"
+
+[learn.done_caught_up]
+other = "That's all for today — everything is reviewed. See you tomorrow."
+
+[learn.done_daily_limit]
+other = "Daily goal reached. There will be more tomorrow."
+
+[learn.done_paused]
+other = "The course is paused. You can resume it in /decks."
+
+[learn.stale_button]
+other = "This card has already been answered. Continue: /learn"

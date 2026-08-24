@@ -42,6 +42,9 @@ type Outcome struct {
 	Expected []string
 	// Card — состояние карточки после ответа.
 	Card study.CardState
+	// CourseID — курс отвеченной карточки: по нему сессия продолжается
+	// следующей карточкой, и спрашивать его отдельно незачем.
+	CourseID study.CourseID
 	// Duplicate означает, что этот ответ уже был учтён, и ничего
 	// не изменилось. Обычно это второе нажатие той же кнопки.
 	Duplicate bool
@@ -82,7 +85,7 @@ func (s *Service) Submit(ctx context.Context, answer Answer) (Outcome, error) {
 	// Токен проверяется до всякой работы: если он не подходит, на карточку
 	// уже ответили, и считать заново нечего.
 	if answer.Attempt != "" && answer.Attempt != Attempt(&card) {
-		return Outcome{Duplicate: true, Card: card.CardState}, nil
+		return Outcome{Duplicate: true, Card: card.CardState, CourseID: card.CourseID}, nil
 	}
 
 	settings, err := s.deps.Settings.Get(ctx, user.ID(course.UserID))
@@ -134,7 +137,7 @@ func (s *Service) Submit(ctx context.Context, answer Answer) (Outcome, error) {
 	if errors.Is(err, port.ErrConflict) {
 		// Кто-то успел ответить на эту карточку, пока мы считали. На практике
 		// это два нажатия подряд, обработанные разными горутинами.
-		return Outcome{Duplicate: true, Card: card.CardState, Expected: accepted}, nil
+		return Outcome{Duplicate: true, Card: card.CardState, CourseID: card.CourseID, Expected: accepted}, nil
 	}
 	if err != nil {
 		return Outcome{}, fmt.Errorf("записать ответ: %w", err)
@@ -146,6 +149,7 @@ func (s *Service) Submit(ctx context.Context, answer Answer) (Outcome, error) {
 		Match:    graded.Match,
 		Expected: accepted,
 		Card:     next,
+		CourseID: card.CourseID,
 	}, nil
 }
 

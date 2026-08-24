@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,12 +25,14 @@ import (
 	// и адаптер репозиториев. Псевдоним разводит их по ролям.
 	storage "lexi-bot/internal/adapter/storage/postgres"
 	"lexi-bot/internal/adapter/telegram"
+	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
 	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
+	"lexi-bot/internal/usecase/session"
 	"lexi-bot/locales"
 )
 
@@ -149,11 +152,42 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
-	// TODO(T-029 … T-034): здесь появятся учебная сессия и остальные
-	// команды. Пока бот честно отвечает только на то, что умеет,
-	// и /help перечисляет ровно это.
+	// Джиттер интервалов — не криптография: он лишь разводит карточки,
+	// введённые в один день, чтобы они не возвращались все разом.
+	// Предсказуемость этого разброса ничем не грозит.
+	jitter := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) //nolint:gosec // разброс интервалов, а не секреты
+
+	scheduler, err := study.NewSM2(study.DefaultSM2Config(), jitter)
+	if err != nil {
+		return nil, err
+	}
+
+	courses := storage.NewCourseRepo(pool)
+	learning, err := session.New(&session.Deps{
+		Cards:     storage.NewCardRepo(pool),
+		Counters:  storage.NewCounterRepo(pool),
+		Courses:   courses,
+		Settings:  storage.NewSettingsRepo(pool),
+		Lexemes:   storage.NewLexemeRepo(pool),
+		Clock:     port.ClockFunc(time.Now),
+		Scheduler: scheduler,
+		Resolver:  study.DefaultRatingResolver(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	learn, err := telegram.NewLearn(learning, courses, transport, catalog)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(T-032 … T-034): к учебной сессии добавятся выбор из четырёх
+	// вариантов, ввод текстом и сводка. Пока бот честно отвечает только
+	// на то, что умеет, и /help перечисляет ровно это.
 	start.Register(r)
 	language.Register(r)
+	learn.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
 	return r, nil

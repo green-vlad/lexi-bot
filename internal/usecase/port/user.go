@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 )
 
@@ -13,7 +14,7 @@ type UserRepo interface {
 	// Ensure заводит пользователя или возвращает существующего по tg_user_id.
 	// Второе значение — признак того, что запись создана: по нему сценарий
 	// онбординга отличает первый /start от повторного и не сбрасывает прогресс.
-	Ensure(ctx context.Context, u user.User) (saved user.User, created bool, err error)
+	Ensure(ctx context.Context, u *user.User) (saved user.User, created bool, err error)
 
 	// ByTelegramID возвращает пользователя по идентификатору Telegram.
 	ByTelegramID(ctx context.Context, tgID user.TelegramID) (user.User, error)
@@ -23,6 +24,10 @@ type UserRepo interface {
 
 	// SetUILang меняет язык интерфейса.
 	SetUILang(ctx context.Context, id user.ID, lang user.UILang) error
+
+	// SetCurrentCourse запоминает, какой курс человек учит сейчас.
+	// Нулевой курс означает «забыть выбор»: занятие возьмёт любой активный.
+	SetCurrentCourse(ctx context.Context, id user.ID, courseID study.CourseID) error
 
 	// SoftDelete помечает запись удалённой, сохраняя журнал повторений.
 	// Так же деактивируется пользователь, заблокировавший бота (T-047).

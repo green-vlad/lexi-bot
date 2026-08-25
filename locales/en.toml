@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/start — start learning\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (studying, your own words, statistics) is coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study\n/decks — my courses\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -180,3 +180,45 @@ other = "Next review in {{.Count}} days"
 
 [learn.summary_next_now]
 other = "The next review is already due: /learn"
+
+[decks.title]
+other = "Your courses:"
+
+[decks.empty]
+other = "No courses yet. Start the first one: /start"
+
+[decks.line_current]
+other = "▸ {{.Deck}} — {{.Learned}} of {{.Total}}"
+
+[decks.line_paused]
+other = "⏸ {{.Deck}} — paused"
+
+[decks.line_archived]
+other = "🗄 {{.Deck}} — archived"
+
+[decks.line_active]
+other = "· {{.Deck}} — {{.Learned}} of {{.Total}}"
+
+[decks.learn]
+other = "Study: {{.Deck}}"
+
+[decks.pause]
+other = "Pause: {{.Deck}}"
+
+[decks.resume]
+other = "Resume: {{.Deck}}"
+
+[decks.archive]
+other = "Archive: {{.Deck}}"
+
+[decks.add]
+other = "+ Add a course"
+
+[decks.switched]
+other = "Studying «{{.Deck}}». Start now: /learn"
+
+[decks.paused]
+other = "The course «{{.Deck}}» is paused: no cards, no reminders."
+
+[decks.archived]
+other = "The course «{{.Deck}}» is archived. Your progress is kept."

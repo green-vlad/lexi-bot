@@ -18,8 +18,11 @@ type (
 )
 
 // withUser кладёт пользователя в контекст.
-func withUser(ctx context.Context, u user.User) context.Context {
-	return context.WithValue(ctx, userKey{}, u)
+//
+// Принимает указатель, а кладёт значение: в контексте должна лежать копия,
+// иначе один хендлер мог бы поменять пользователя под ногами у другого.
+func withUser(ctx context.Context, u *user.User) context.Context {
+	return context.WithValue(ctx, userKey{}, *u)
 }
 
 // UserFrom достаёт пользователя, определённого middleware.

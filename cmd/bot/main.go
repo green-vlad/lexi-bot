@@ -30,6 +30,7 @@ import (
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
+	"lexi-bot/internal/usecase/courses"
 	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
@@ -112,6 +113,14 @@ func run() error {
 // на определении пользователя. Затем определение пользователя, и только
 // после него локализация — язык интерфейса известен из его настроек.
 func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool, cfg *config.Config, log *slog.Logger) (port.UpdateHandler, error) {
+	// Репозитории заводятся по одному разу и раздаются сценариям: каждый
+	// из них — тонкая обёртка над пулом, но два экземпляра одного и того же
+	// в графе зависимостей только сбивают с толку.
+	users := storage.NewUserRepo(pool)
+	courseRepo := storage.NewCourseRepo(pool)
+	decks := storage.NewDeckRepo(pool)
+	cards := storage.NewCardRepo(pool)
+
 	dialogs, err := telegram.NewDialogs(&telegram.DialogsConfig{
 		Sessions:  storage.NewSessionRepo(pool),
 		Messenger: transport,
@@ -122,10 +131,10 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	}
 
 	onboardingService, err := onboarding.New(onboarding.Deps{
-		Users:           storage.NewUserRepo(pool),
+		Users:           users,
 		Settings:        storage.NewSettingsRepo(pool),
-		Decks:           storage.NewDeckRepo(pool),
-		Courses:         storage.NewCourseRepo(pool),
+		Decks:           decks,
+		Courses:         courseRepo,
 		DefaultTimezone: user.NewTimezone(cfg.DefaultTimezone),
 	})
 	if err != nil {
@@ -142,12 +151,12 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		telegram.Recover(transport, catalog, log),
 		telegram.Logging(log),
 		telegram.AnswerCallbacks(transport, log),
-		telegram.Identify(storage.NewUserRepo(pool), log),
+		telegram.Identify(users, log),
 		telegram.Localize(catalog),
 		dialogs.Middleware(),
 	)
 
-	language, err := telegram.NewLanguage(storage.NewUserRepo(pool), transport, catalog)
+	language, err := telegram.NewLanguage(users, transport, catalog)
 	if err != nil {
 		return nil, err
 	}
@@ -162,15 +171,24 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
-	courses := storage.NewCourseRepo(pool)
 	clock := port.ClockFunc(time.Now)
+
+	courseService, err := courses.New(courses.Deps{
+		Users:   users,
+		Courses: courseRepo,
+		Decks:   decks,
+		Cards:   cards,
+	})
+	if err != nil {
+		return nil, err
+	}
 	learning, err := session.New(&session.Deps{
-		Cards:     storage.NewCardRepo(pool),
+		Cards:     cards,
 		Counters:  storage.NewCounterRepo(pool),
-		Courses:   courses,
+		Courses:   courseRepo,
 		Settings:  storage.NewSettingsRepo(pool),
 		Lexemes:   storage.NewLexemeRepo(pool),
-		Decks:     storage.NewDeckRepo(pool),
+		Decks:     decks,
 		Clock:     clock,
 		Rand:      jitter,
 		Scheduler: scheduler,
@@ -180,7 +198,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
-	learn, err := telegram.NewLearn(learning, courses, transport, catalog, clock, dialogs)
+	learn, err := telegram.NewLearn(learning, courseService, transport, catalog, clock, dialogs)
 	if err != nil {
 		return nil, err
 	}
@@ -188,9 +206,15 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	// TODO(T-032 … T-034): к учебной сессии добавятся выбор из четырёх
 	// вариантов, ввод текстом и сводка. Пока бот честно отвечает только
 	// на то, что умеет, и /help перечисляет ровно это.
+	decksHandler, err := telegram.NewDecks(courseService, transport)
+	if err != nil {
+		return nil, err
+	}
+
 	start.Register(r)
 	language.Register(r)
 	learn.Register(r)
+	decksHandler.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
 	return r, nil

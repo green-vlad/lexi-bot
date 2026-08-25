@@ -27,12 +27,20 @@ func newUser(t *testing.T, tgID user.TelegramID, name string, lang user.UILang) 
 	return u
 }
 
+// newUserPtr собирает пользователя для вызовов, принимающих указатель.
+func newUserPtr(t *testing.T, tgID user.TelegramID, name string, lang user.UILang) *user.User {
+	t.Helper()
+
+	u := newUser(t, tgID, name, lang)
+	return &u
+}
+
 // ensureUser заводит пользователя и возвращает его.
 func ensureUser(t *testing.T, pool *pgxpool.Pool, tgID user.TelegramID) user.User {
 	t.Helper()
 
 	repo := postgres.NewUserRepo(pool)
-	saved, _, err := repo.Ensure(context.Background(), newUser(t, tgID, "durov", user.UILangRU))
+	saved, _, err := repo.Ensure(context.Background(), newUserPtr(t, tgID, "durov", user.UILangRU))
 	if err != nil {
 		t.Fatalf("Ensure() вернул ошибку: %v", err)
 	}
@@ -44,7 +52,7 @@ func TestUserEnsureCreates(t *testing.T) {
 	repo := postgres.NewUserRepo(pool)
 	ctx := context.Background()
 
-	saved, created, err := repo.Ensure(ctx, newUser(t, 777, "@durov", user.UILangRU))
+	saved, created, err := repo.Ensure(ctx, newUserPtr(t, 777, "@durov", user.UILangRU))
 	if err != nil {
 		t.Fatalf("Ensure() вернул ошибку: %v", err)
 	}
@@ -70,13 +78,13 @@ func TestUserEnsureIsIdempotent(t *testing.T) {
 	repo := postgres.NewUserRepo(pool)
 	ctx := context.Background()
 
-	first, _, err := repo.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU))
+	first, _, err := repo.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU))
 	if err != nil {
 		t.Fatalf("Ensure() вернул ошибку: %v", err)
 	}
 
 	// Повторный /start: тот же пользователь, а не второй.
-	second, created, err := repo.Ensure(ctx, newUser(t, 777, "pavel", user.UILangEN))
+	second, created, err := repo.Ensure(ctx, newUserPtr(t, 777, "pavel", user.UILangEN))
 	if err != nil {
 		t.Fatalf("повторный Ensure() вернул ошибку: %v", err)
 	}
@@ -118,7 +126,7 @@ func TestUserEnsureRevivesDeleted(t *testing.T) {
 
 	// Пользователь, заблокировавший бота и вернувшийся, продолжает с того же
 	// места, а не начинает заново.
-	revived, created, err := repo.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU))
+	revived, created, err := repo.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU))
 	if err != nil {
 		t.Fatalf("Ensure() вернул ошибку: %v", err)
 	}

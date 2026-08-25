@@ -66,6 +66,18 @@ func NewOnboarding(service *onboarding.Service, dialogs *Dialogs, messenger port
 // Register привязывает команду к роутеру.
 func (o *Onboarding) Register(router *Router) {
 	router.Command("start", port.UpdateHandlerFunc(o.start))
+	// Добавление курса из /decks — тот же самый диалог: выбор языка,
+	// колоды и языка перевода. Второй такой же городить незачем.
+	router.CallbackAction(actionCourseAdd, port.UpdateHandlerFunc(o.addCourse))
+}
+
+// addCourse начинает выбор ещё одного курса.
+func (o *Onboarding) addCourse(ctx context.Context, u *port.Update) error {
+	state, err := o.showLearning(ctx, u, dialogState{})
+	if err != nil || state.MessageID == 0 {
+		return err
+	}
+	return o.dialogs.Start(ctx, stateLearning, state)
 }
 
 // dialogState — что пользователь успел выбрать.
@@ -93,7 +105,7 @@ func (o *Onboarding) start(ctx context.Context, u *port.Update) error {
 	if started {
 		// Гонять по кнопкам заново того, кто уже учит, незачем: он вернулся
 		// не знакомиться, а заниматься.
-		return o.greetReturning(ctx, u, known)
+		return o.greetReturning(ctx, u, &known)
 	}
 
 	localizer, err := o.localizer(ctx)
@@ -101,7 +113,7 @@ func (o *Onboarding) start(ctx context.Context, u *port.Update) error {
 		return err
 	}
 
-	greeting, err := localizer.T("start.greeting", port.Args{"Name": displayName(localizer, u, known)})
+	greeting, err := localizer.T("start.greeting", port.Args{"Name": displayName(localizer, u, &known)})
 	if err != nil {
 		return err
 	}
@@ -125,7 +137,7 @@ func (o *Onboarding) start(ctx context.Context, u *port.Update) error {
 }
 
 // greetReturning отвечает тому, у кого курс уже есть.
-func (o *Onboarding) greetReturning(ctx context.Context, u *port.Update, known user.User) error {
+func (o *Onboarding) greetReturning(ctx context.Context, u *port.Update, known *user.User) error {
 	courses, err := o.service.Courses(ctx, known.ID)
 	if err != nil {
 		return err
@@ -520,7 +532,7 @@ func mustText(localizer port.Localizer, key string) string {
 
 // displayName выбирает, как обратиться к человеку. Имени в Telegram может
 // не быть вовсе, и тогда здоровается бот безлично — но на языке пользователя.
-func displayName(localizer port.Localizer, u *port.Update, known user.User) string {
+func displayName(localizer port.Localizer, u *port.Update, known *user.User) string {
 	if known.Username != "" {
 		return known.Username
 	}

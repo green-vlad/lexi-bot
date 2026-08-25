@@ -22,7 +22,7 @@ other = "Привет, {{.Name}}! Я помогу выучить слова — 
 other = "Выберите язык интерфейса."
 
 [help.text]
-other = "Вот что я умею:\n\n/start — начать заниматься\n/language — язык интерфейса\n/cancel — прервать диалог\n/help — эта справка\n\nОстальное (занятия, свои слова, статистика) появится в ближайших обновлениях."
+other = "Вот что я умею:\n\n/learn — заниматься\n/decks — мои курсы\n/start — начать заново\n/language — язык интерфейса\n/cancel — прервать диалог\n/help — эта справка\n\nОстальное (свои слова, статистика, напоминания) появится в ближайших обновлениях."
 
 [language.changed]
 other = "Язык интерфейса переключён на русский."
@@ -196,3 +196,45 @@ other = "Следующее повторение через {{.Count}} дня"
 
 [learn.summary_next_now]
 other = "Следующее повторение уже готово: /learn"
+
+[decks.title]
+other = "Ваши курсы:"
+
+[decks.empty]
+other = "Курсов пока нет. Завести первый: /start"
+
+[decks.line_current]
+other = "▸ {{.Deck}} — {{.Learned}} из {{.Total}}"
+
+[decks.line_paused]
+other = "⏸ {{.Deck}} — на паузе"
+
+[decks.line_archived]
+other = "🗄 {{.Deck}} — в архиве"
+
+[decks.line_active]
+other = "· {{.Deck}} — {{.Learned}} из {{.Total}}"
+
+[decks.learn]
+other = "Учить: {{.Deck}}"
+
+[decks.pause]
+other = "Пауза: {{.Deck}}"
+
+[decks.resume]
+other = "Продолжить: {{.Deck}}"
+
+[decks.archive]
+other = "В архив: {{.Deck}}"
+
+[decks.add]
+other = "+ Добавить курс"
+
+[decks.switched]
+other = "Учим «{{.Deck}}». Начать: /learn"
+
+[decks.paused]
+other = "Курс «{{.Deck}}» на паузе: карточки не выдаются, напоминания не приходят."
+
+[decks.archived]
+other = "Курс «{{.Deck}}» убран в архив. Прогресс сохранён."

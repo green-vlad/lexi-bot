@@ -11,6 +11,7 @@ import (
 
 	"lexi-bot/internal/adapter/i18n"
 	"lexi-bot/internal/adapter/telegram"
+	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/locales"
@@ -69,7 +70,7 @@ func newFakeUsers() *fakeUsers {
 	return &fakeUsers{byTgID: map[user.TelegramID]user.User{}, nextID: 1}
 }
 
-func (f *fakeUsers) Ensure(_ context.Context, u user.User) (user.User, bool, error) {
+func (f *fakeUsers) Ensure(_ context.Context, u *user.User) (user.User, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -83,10 +84,11 @@ func (f *fakeUsers) Ensure(_ context.Context, u user.User) (user.User, bool, err
 		f.byTgID[u.TelegramID] = existing
 		return existing, false, nil
 	}
-	u.ID = f.nextID
+	saved := *u
+	saved.ID = f.nextID
 	f.nextID++
-	f.byTgID[u.TelegramID] = u
-	return u, true, nil
+	f.byTgID[u.TelegramID] = saved
+	return saved, true, nil
 }
 
 func (f *fakeUsers) ByTelegramID(_ context.Context, tgID user.TelegramID) (user.User, error) {
@@ -102,7 +104,21 @@ func (f *fakeUsers) ByTelegramID(_ context.Context, tgID user.TelegramID) (user.
 	return user.User{}, port.ErrNotFound
 }
 
-func (f *fakeUsers) ByID(context.Context, user.ID) (user.User, error) {
+// ByID ищет по внутреннему идентификатору. Заглушка, отвечающая «нет
+// такого», делала бы бессмысленными тесты всего, что ходит за пользователем
+// по его же идентификатору.
+func (f *fakeUsers) ByID(_ context.Context, id user.ID) (user.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.failWith != nil {
+		return user.User{}, f.failWith
+	}
+	for _, u := range f.byTgID {
+		if u.ID == id {
+			return u, nil
+		}
+	}
 	return user.User{}, port.ErrNotFound
 }
 
@@ -124,6 +140,20 @@ func (f *fakeUsers) SetUILang(_ context.Context, id user.ID, lang user.UILang) e
 	}
 	return port.ErrNotFound
 }
+func (f *fakeUsers) SetCurrentCourse(_ context.Context, id user.ID, courseID study.CourseID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for tgID, u := range f.byTgID {
+		if u.ID == id {
+			u.CurrentCourse = courseID
+			f.byTgID[tgID] = u
+			return nil
+		}
+	}
+	return port.ErrNotFound
+}
+
 func (f *fakeUsers) SoftDelete(context.Context, user.ID, time.Time) error { return nil }
 func (f *fakeUsers) Purge(context.Context, user.ID) error                 { return nil }
 

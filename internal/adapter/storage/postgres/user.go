@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/usecase/port"
 )
@@ -24,7 +25,7 @@ var _ port.UserRepo = (*UserRepo)(nil)
 
 // userColumns перечислены в одном месте: список повторяется в трёх запросах,
 // и разъехавшись, он даст ошибку сканирования, а не понятную ошибку сборки.
-const userColumns = "id, tg_user_id, tg_username, ui_lang, deleted_at"
+const userColumns = "id, tg_user_id, tg_username, ui_lang, COALESCE(current_course_id, 0), deleted_at"
 
 // Ensure заводит пользователя или возвращает существующего.
 //
@@ -32,7 +33,7 @@ const userColumns = "id, tg_user_id, tg_username, ui_lang, deleted_at"
 // обновляется только имя в Telegram, которое пользователь мог сменить.
 // Заодно снимается мягкое удаление — человек, вернувшийся после блокировки
 // бота, продолжает с того же места.
-func (r *UserRepo) Ensure(ctx context.Context, u user.User) (user.User, bool, error) {
+func (r *UserRepo) Ensure(ctx context.Context, u *user.User) (user.User, bool, error) {
 	const op = "создать или найти пользователя"
 
 	if err := u.Validate(); err != nil {
@@ -90,6 +91,30 @@ func (r *UserRepo) ByID(ctx context.Context, id user.ID) (user.User, error) {
 	return u, nil
 }
 
+// SetCurrentCourse запоминает, какой курс человек учит сейчас.
+//
+// Курс проверяется на принадлежность прямо в запросе: идентификатор
+// приезжает из кнопки, а кнопку можно подделать, и чужой курс тогда стал бы
+// «текущим» — с чужими карточками в занятии.
+func (r *UserRepo) SetCurrentCourse(ctx context.Context, id user.ID, courseID study.CourseID) error {
+	const op = "выбрать текущий курс"
+
+	if courseID == 0 {
+		const forget = "UPDATE users SET current_course_id = NULL WHERE id = $1"
+		tag, err := r.db(ctx).Exec(ctx, forget, int64(id))
+		return requireRows(op, tag, err)
+	}
+
+	const query = `
+		UPDATE users
+		SET current_course_id = $2
+		WHERE id = $1
+		  AND EXISTS (SELECT 1 FROM user_courses WHERE id = $2 AND user_id = $1)`
+
+	tag, err := r.db(ctx).Exec(ctx, query, int64(id), int64(courseID))
+	return requireRows(op, tag, err)
+}
+
 // SetUILang меняет язык интерфейса.
 func (r *UserRepo) SetUILang(ctx context.Context, id user.ID, lang user.UILang) error {
 	const op = "сменить язык интерфейса"
@@ -136,10 +161,11 @@ func scanUserWith(r row, u *user.User, created *bool) error {
 		id        int64
 		tgID      int64
 		lang      string
+		courseID  int64
 		deletedAt *time.Time
 	)
 
-	dest := []any{&id, &tgID, &u.Username, &lang, &deletedAt}
+	dest := []any{&id, &tgID, &u.Username, &lang, &courseID, &deletedAt}
 	if created != nil {
 		dest = append(dest, created)
 	}
@@ -150,6 +176,7 @@ func scanUserWith(r row, u *user.User, created *bool) error {
 	u.ID = user.ID(id)
 	u.TelegramID = user.TelegramID(tgID)
 	u.UILang = user.UILang(lang)
+	u.CurrentCourse = study.CourseID(courseID)
 	if deletedAt != nil {
 		u.DeletedAt = *deletedAt
 	} else {

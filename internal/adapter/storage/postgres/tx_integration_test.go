@@ -34,7 +34,7 @@ func TestInTxCommits(t *testing.T) {
 	ctx := context.Background()
 
 	err := tm.InTx(ctx, func(ctx context.Context) error {
-		saved, _, err := users.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU))
+		saved, _, err := users.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU))
 		if err != nil {
 			return err
 		}
@@ -59,7 +59,7 @@ func TestInTxRollsBackEverything(t *testing.T) {
 	// Правило: если функция вернула ошибку, не изменилось ничего —
 	// ни пользователь, ни настройки, записанные до неё.
 	err := tm.InTx(ctx, func(ctx context.Context) error {
-		saved, _, err := users.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU))
+		saved, _, err := users.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU))
 		if err != nil {
 			return err
 		}
@@ -92,7 +92,7 @@ func TestInTxSeesOwnWrites(t *testing.T) {
 	ctx := context.Background()
 
 	err := tm.InTx(ctx, func(ctx context.Context) error {
-		saved, _, err := users.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU))
+		saved, _, err := users.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU))
 		if err != nil {
 			return err
 		}
@@ -127,12 +127,12 @@ func TestNestedInTxJoinsOuter(t *testing.T) {
 	// Вложенный вызов не открывает вторую транзакцию и не ставит SAVEPOINT:
 	// ошибка внутри откатывает всё, включая работу внешнего вызова.
 	err := tm.InTx(ctx, func(ctx context.Context) error {
-		if _, _, err := users.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU)); err != nil {
+		if _, _, err := users.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU)); err != nil {
 			return err
 		}
 
 		return tm.InTx(ctx, func(ctx context.Context) error {
-			if _, _, err := users.Ensure(ctx, newUser(t, 888, "pavel", user.UILangEN)); err != nil {
+			if _, _, err := users.Ensure(ctx, newUserPtr(t, 888, "pavel", user.UILangEN)); err != nil {
 				return err
 			}
 			return errBoom
@@ -154,11 +154,11 @@ func TestNestedInTxCommitsOnce(t *testing.T) {
 	ctx := context.Background()
 
 	err := tm.InTx(ctx, func(ctx context.Context) error {
-		if _, _, err := users.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU)); err != nil {
+		if _, _, err := users.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU)); err != nil {
 			return err
 		}
 		return tm.InTx(ctx, func(ctx context.Context) error {
-			_, _, err := users.Ensure(ctx, newUser(t, 888, "pavel", user.UILangEN))
+			_, _, err := users.Ensure(ctx, newUserPtr(t, 888, "pavel", user.UILangEN))
 			return err
 		})
 	})
@@ -187,7 +187,7 @@ func TestInTxRollsBackOnPanic(t *testing.T) {
 		}()
 
 		_ = tm.InTx(ctx, func(ctx context.Context) error {
-			if _, _, err := users.Ensure(ctx, newUser(t, 777, "durov", user.UILangRU)); err != nil {
+			if _, _, err := users.Ensure(ctx, newUserPtr(t, 777, "durov", user.UILangRU)); err != nil {
 				return err
 			}
 			panic("что-то пошло не так")

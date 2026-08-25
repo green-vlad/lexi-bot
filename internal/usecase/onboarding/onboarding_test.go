@@ -185,8 +185,8 @@ type fakeUsers struct {
 
 func newFakeUsers() *fakeUsers { return &fakeUsers{langs: map[user.ID]user.UILang{}} }
 
-func (f *fakeUsers) Ensure(_ context.Context, u user.User) (user.User, bool, error) {
-	return u, false, nil
+func (f *fakeUsers) Ensure(_ context.Context, u *user.User) (user.User, bool, error) {
+	return *u, false, nil
 }
 func (f *fakeUsers) ByTelegramID(context.Context, user.TelegramID) (user.User, error) {
 	return user.User{}, port.ErrNotFound
@@ -200,6 +200,11 @@ func (f *fakeUsers) SetUILang(_ context.Context, id user.ID, lang user.UILang) e
 		return f.fail
 	}
 	f.langs[id] = lang
+	return nil
+}
+
+func (f *fakeUsers) SetCurrentCourse(context.Context, user.ID, study.CourseID) error {
+	// Онбордингу текущий курс не нужен.
 	return nil
 }
 

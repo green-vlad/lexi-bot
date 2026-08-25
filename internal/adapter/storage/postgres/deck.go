@@ -214,6 +214,40 @@ func (r *DeckRepo) ByCode(ctx context.Context, code string) (lexicon.Deck, error
 	return deck, nil
 }
 
+// EnsureBuiltin заводит встроенную колоду или обновляет её описание.
+//
+// Слаг — ключ: по нему сидер узнаёт колоду при повторной загрузке.
+// Название и описание при этом перезаписываются, а размер не трогается —
+// его считает добавление слов, и обнулять его на секунду означало бы
+// показать пользователю пустую колоду ровно в этот момент.
+func (r *DeckRepo) EnsureBuiltin(ctx context.Context, deck *lexicon.Deck) (lexicon.Deck, error) {
+	const op = "создать или обновить встроенную колоду"
+
+	if err := deck.Validate(); err != nil {
+		return lexicon.Deck{}, err
+	}
+	if !deck.IsBuiltin() {
+		return lexicon.Deck{}, fmt.Errorf("%s: %w (колода принадлежит пользователю %d)",
+			op, port.ErrInvalidData, deck.OwnerID)
+	}
+
+	const query = `
+		INSERT INTO decks (code, lang_code, title, description)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (code) WHERE owner_user_id IS NULL
+		DO UPDATE SET lang_code   = EXCLUDED.lang_code,
+		              title       = EXCLUDED.title,
+		              description = EXCLUDED.description
+		RETURNING ` + deckColumns
+
+	var saved lexicon.Deck
+	row := r.db(ctx).QueryRow(ctx, query, deck.Code, deck.Lang.String(), deck.Title, deck.Description)
+	if err := scanDeck(row, &saved); err != nil {
+		return lexicon.Deck{}, wrap(op, err)
+	}
+	return saved, nil
+}
+
 // EnsurePersonal возвращает личную колоду пользователя для языка изучения,
 // создавая её при первом добавлении своего слова.
 func (r *DeckRepo) EnsurePersonal(ctx context.Context, ownerID int64, lang lexicon.Language, title string) (lexicon.Deck, error) {

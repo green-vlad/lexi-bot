@@ -480,6 +480,11 @@ func (s *stubDecks) ByCode(context.Context, string) (lexicon.Deck, error) {
 	return lexicon.Deck{}, port.ErrNotFound
 }
 
+func (s *stubDecks) EnsureBuiltin(context.Context, *lexicon.Deck) (lexicon.Deck, error) {
+	// Заглушке нечего заводить: онбординг и сессия колоды не создают.
+	return lexicon.Deck{}, nil
+}
+
 func (s *stubDecks) EnsurePersonal(context.Context, int64, lexicon.Language, string) (lexicon.Deck, error) {
 	return lexicon.Deck{}, nil
 }

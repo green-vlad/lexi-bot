@@ -44,7 +44,12 @@ func saveLexemes(t *testing.T, pool *pgxpool.Pool, lexemes ...lexicon.Lexeme) []
 	if err != nil {
 		t.Fatalf("Upsert() вернул ошибку: %v", err)
 	}
-	return saved
+
+	out := make([]lexicon.Lexeme, 0, len(saved))
+	for i := range saved {
+		out = append(out, saved[i].Lexeme)
+	}
+	return out
 }
 
 func TestLexemeUpsertAssignsIDsInOrder(t *testing.T) {
@@ -69,18 +74,21 @@ func TestLexemeUpsertAssignsIDsInOrder(t *testing.T) {
 	// Порядок ответа повторяет порядок запроса: сидер сопоставляет строки
 	// со своим списком по позиции.
 	for i := range want {
-		if saved[i].Term != want[i].Term {
-			t.Errorf("позиция %d: term = %q, ожидалось %q", i, saved[i].Term, want[i].Term)
+		if saved[i].Lexeme.Term != want[i].Term {
+			t.Errorf("позиция %d: term = %q, ожидалось %q", i, saved[i].Lexeme.Term, want[i].Term)
 		}
-		if saved[i].ID == 0 {
+		if saved[i].Lexeme.ID == 0 {
 			t.Errorf("позиция %d: идентификатор не присвоен", i)
 		}
-		if !saved[i].IsBuiltin() {
+		if !saved[i].Lexeme.IsBuiltin() {
 			t.Errorf("позиция %d: слово без владельца должно быть встроенным", i)
 		}
+		if !saved[i].Created {
+			t.Errorf("позиция %d: слово должно считаться новым", i)
+		}
 	}
-	if saved[0].Reading != "jip" || saved[0].FreqRank != 12 {
-		t.Errorf("поля не сохранились: %+v", saved[0])
+	if saved[0].Lexeme.Reading != "jip" || saved[0].Lexeme.FreqRank != 12 {
+		t.Errorf("поля не сохранились: %+v", saved[0].Lexeme)
 	}
 }
 
@@ -99,11 +107,15 @@ func TestLexemeUpsertIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("повторный Upsert() вернул ошибку: %v", err)
 	}
-	if second[0].ID != first[0].ID {
-		t.Errorf("идентификатор сменился: %d против %d", second[0].ID, first[0].ID)
+	if second[0].Lexeme.ID != first[0].ID {
+		t.Errorf("идентификатор сменился: %d против %d", second[0].Lexeme.ID, first[0].ID)
 	}
-	if second[0].FreqRank != 7 || second[0].Reading != "jip" {
-		t.Errorf("обновляемые поля не обновились: %+v", second[0])
+	if second[0].Lexeme.FreqRank != 7 || second[0].Lexeme.Reading != "jip" {
+		t.Errorf("обновляемые поля не обновились: %+v", second[0].Lexeme)
+	}
+	// Слово было и изменилось: сидер должен увидеть это в отчёте.
+	if second[0].Created || !second[0].Changed {
+		t.Errorf("признаки записи = %+v, ожидалось «изменено»", second[0])
 	}
 
 	var count int
@@ -133,8 +145,8 @@ func TestLexemeUpsertHandlesDuplicatesInBatch(t *testing.T) {
 	if len(saved) != 2 {
 		t.Fatalf("сохранено %d лексем, ожидалось две", len(saved))
 	}
-	if saved[0].Term != "집" || saved[0].FreqRank != 3 {
-		t.Errorf("осталось не последнее вхождение: %+v", saved[0])
+	if saved[0].Lexeme.Term != "집" || saved[0].Lexeme.FreqRank != 3 {
+		t.Errorf("осталось не последнее вхождение: %+v", saved[0].Lexeme)
 	}
 }
 
@@ -154,7 +166,7 @@ func TestLexemeBuiltinAndPersonalCoexist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Upsert() вернул ошибку: %v", err)
 	}
-	if len(saved) != 2 || saved[0].ID == saved[1].ID {
+	if len(saved) != 2 || saved[0].Lexeme.ID == saved[1].Lexeme.ID {
 		t.Fatalf("встроенное и личное слово должны быть разными строками: %+v", saved)
 	}
 

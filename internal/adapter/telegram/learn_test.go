@@ -10,6 +10,7 @@ import (
 	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
+	"lexi-bot/internal/usecase/courses"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
 )
@@ -74,6 +75,13 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	// Порядок вариантов фиксирован: тест должен знать, где правильный.
 	f.rand = &stubRand{}
 
+	users := newFakeUsers()
+	// Пользователь должен существовать до занятия: курс ищется по нему.
+	owner := mustUser(t, 555, user.UILangRU)
+	if _, _, err := users.Ensure(context.Background(), &owner); err != nil {
+		t.Fatalf("Ensure() вернул ошибку: %v", err)
+	}
+
 	scheduler, err := study.NewSM2(study.DefaultSM2Config(), nil)
 	if err != nil {
 		t.Fatalf("NewSM2() вернул ошибку: %v", err)
@@ -105,12 +113,21 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		t.Fatalf("NewDialogs() вернул ошибку: %v", err)
 	}
 
-	handler, err := telegram.NewLearn(service, f.courses, f.messenger, testCatalog(t), clock, dialogs)
+	courseService, err := courses.New(courses.Deps{
+		Users:   users,
+		Courses: f.courses,
+		Decks:   f.decks,
+		Cards:   f.cards,
+	})
+	if err != nil {
+		t.Fatalf("courses.New() вернул ошибку: %v", err)
+	}
+
+	handler, err := telegram.NewLearn(service, courseService, f.messenger, testCatalog(t), clock, dialogs)
 	if err != nil {
 		t.Fatalf("NewLearn() вернул ошибку: %v", err)
 	}
 
-	users := newFakeUsers()
 	f.router = telegram.NewRouter()
 	f.router.Use(
 		telegram.AnswerCallbacks(f.messenger, quietLogger()),

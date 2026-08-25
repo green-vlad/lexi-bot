@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"lexi-bot/internal/domain/study"
 )
 
 // MaxUsernameLen — предел длины имени пользователя Telegram.
@@ -33,6 +35,9 @@ type User struct {
 	// Username — имя вида @durov без собачки; у пользователя его может не быть.
 	Username string
 	UILang   UILang
+	// CurrentCourse — курс, который человек учит сейчас. Ноль означает
+	// «ещё не выбран»: тогда занятие берёт любой активный.
+	CurrentCourse study.CourseID
 	// DeletedAt — момент мягкого удаления. Нулевое значение означает, что
 	// учётная запись активна: строки не удаляются физически, чтобы журнал
 	// повторений и статистика оставались непротиворечивыми.

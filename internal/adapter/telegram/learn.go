@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
+	"lexi-bot/internal/usecase/courses"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
 )
@@ -47,7 +47,7 @@ type typingState struct {
 // карточек иначе превращалось бы в сотню сообщений в чате.
 type Learn struct {
 	session   *session.Service
-	courses   port.CourseRepo
+	courses   *courses.Service
 	messenger port.Messenger
 	catalog   port.Catalog
 	clock     port.Clock
@@ -55,12 +55,12 @@ type Learn struct {
 }
 
 // NewLearn создаёт хендлер учебной сессии.
-func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.Messenger, catalog port.Catalog, clock port.Clock, dialogs *Dialogs) (*Learn, error) {
+func NewLearn(service *session.Service, courseService *courses.Service, messenger port.Messenger, catalog port.Catalog, clock port.Clock, dialogs *Dialogs) (*Learn, error) {
 	switch {
 	case service == nil:
 		return nil, errors.New("сессии нужен сценарий")
-	case courses == nil:
-		return nil, errors.New("сессии нужен CourseRepo")
+	case courseService == nil:
+		return nil, errors.New("сессии нужен сценарий курсов")
 	case messenger == nil:
 		return nil, errors.New("сессии нужен мессенджер")
 	case catalog == nil:
@@ -72,7 +72,7 @@ func NewLearn(service *session.Service, courses port.CourseRepo, messenger port.
 	}
 
 	l := &Learn{
-		session: service, courses: courses, messenger: messenger,
+		session: service, courses: courseService, messenger: messenger,
 		catalog: catalog, clock: clock, dialogs: dialogs,
 	}
 	dialogs.Register(stateTyping, StepFunc(l.typed))
@@ -175,12 +175,12 @@ func (l *Learn) start(ctx context.Context, u *port.Update) error {
 		return errors.New("/learn без пользователя")
 	}
 
-	courses, err := l.courses.ByUser(ctx, known.ID)
+	// Какой курс учить — решает сценарий курсов: он знает и про выбор
+	// пользователя, и про то, что выбранный курс мог уехать на паузу.
+	course, ok, err := l.courses.Current(ctx, known.ID)
 	if err != nil {
-		return fmt.Errorf("получить курсы: %w", err)
+		return err
 	}
-
-	course, ok := firstActive(courses)
 	if !ok {
 		// Учить нечего: человек ещё не выбрал курс или поставил всё на паузу.
 		return Reply(l.messenger, "learn.no_course").Handle(ctx, u)
@@ -678,13 +678,4 @@ func decodeTime(encoded string) (time.Time, bool) {
 func parseRating(name string) (study.Rating, bool) {
 	rating, err := study.ParseRating(name)
 	return rating, err == nil
-}
-
-func firstActive(courses []study.Course) (study.Course, bool) {
-	for i := range courses {
-		if courses[i].IsActive() {
-			return courses[i], true
-		}
-	}
-	return study.Course{}, false
 }

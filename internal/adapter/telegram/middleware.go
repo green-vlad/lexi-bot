@@ -191,7 +191,7 @@ func Identify(users port.UserRepo, log *slog.Logger) Middleware {
 			// его увидят и сценарии, и репозитории, которые про Telegram
 			// ничего не знают.
 			ctx = logger.WithUserID(ctx, int64(found.ID))
-			return next.Handle(withUser(ctx, found), u)
+			return next.Handle(withUser(ctx, &found), u)
 		})
 	}
 }
@@ -208,7 +208,7 @@ func ensure(ctx context.Context, users port.UserRepo, u *port.Update, lang user.
 		}
 	}
 
-	saved, _, err := users.Ensure(ctx, wanted)
+	saved, _, err := users.Ensure(ctx, &wanted)
 	return saved, err
 }
 

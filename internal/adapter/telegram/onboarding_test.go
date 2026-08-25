@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -529,17 +530,35 @@ func (s *stubCourses) ByID(_ context.Context, id study.CourseID) (study.Course, 
 	return study.Course{}, port.ErrNotFound
 }
 
+// ByUser возвращает курсы по возрастанию идентификатора: обход карты
+// в Go случаен, и «первый активный курс» иначе менялся бы от прогона
+// к прогону — как и то, что показывает список.
 func (s *stubCourses) ByUser(_ context.Context, userID user.ID) ([]study.Course, error) {
+	ids := make([]int, 0, len(s.byID))
+	for id := range s.byID {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+
 	var out []study.Course
-	for _, c := range s.byID {
-		if c.UserID == int64(userID) {
-			out = append(out, c)
+	for _, id := range ids {
+		if course := s.byID[study.CourseID(id)]; course.UserID == int64(userID) {
+			out = append(out, course)
 		}
 	}
 	return out, nil
 }
 
-func (s *stubCourses) SetStatus(context.Context, study.CourseID, study.CourseStatus) error {
+// SetStatus меняет состояние курса. Заглушка, молча возвращавшая nil,
+// делала бы зелёными тесты паузы и архива при неработающем коде.
+func (s *stubCourses) SetStatus(_ context.Context, id study.CourseID, status study.CourseStatus) error {
+	course, ok := s.byID[id]
+	if !ok {
+		return port.ErrNotFound
+	}
+
+	course.Status = status
+	s.byID[id] = course
 	return nil
 }
 

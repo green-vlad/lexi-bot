@@ -296,7 +296,8 @@ func TestLocalizePrefersSavedLanguage(t *testing.T) {
 
 	// Пользователь выбрал английский в боте, а клиент Telegram у него
 	// русский: выбор в боте важнее.
-	saved, _, err := users.Ensure(context.Background(), mustUser(t, 555, user.UILangEN))
+	wanted := mustUser(t, 555, user.UILangEN)
+	saved, _, err := users.Ensure(context.Background(), &wanted)
 	if err != nil {
 		t.Fatalf("Ensure() вернул ошибку: %v", err)
 	}

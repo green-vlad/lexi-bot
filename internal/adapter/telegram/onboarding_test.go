@@ -177,22 +177,14 @@ func (f *onboardingFixture) press(t *testing.T, data string) {
 func (f *onboardingFixture) buttons(t *testing.T) []string {
 	t.Helper()
 
-	var keyboard *port.Keyboard
-	f.messenger.mu.Lock()
-	if len(f.messenger.edits) > 0 {
-		keyboard = f.messenger.edits[len(f.messenger.edits)-1].Keyboard
-	}
-	f.messenger.mu.Unlock()
-
-	if keyboard == nil {
-		keyboard = f.messenger.last(t).Keyboard
-	}
-	if keyboard == nil {
+	last := f.messenger.latest(t)
+	if last.Keyboard == nil {
 		t.Fatal("на экране нет кнопок")
+		return nil
 	}
 
 	var out []string
-	for _, row := range keyboard.Rows {
+	for _, row := range last.Keyboard.Rows {
 		for _, b := range row {
 			out = append(out, b.Data)
 		}

@@ -6,13 +6,26 @@ import (
 	"lexi-bot/internal/domain/lexicon"
 )
 
+// Upserted — что стало со словом при записи.
+//
+// Различать эти три случая нужно сидеру: он запускается на каждом выкате,
+// и «добавлено 0, обновлено 0, без изменений 2000» — единственный ответ,
+// по которому видно, что словарь не поехал.
+type Upserted struct {
+	Lexeme lexicon.Lexeme
+	// Created — слова не было вовсе.
+	Created bool
+	// Changed — слово было, но данные отличались.
+	Changed bool
+}
+
 // LexemeRepo хранит слова и их переводы.
 type LexemeRepo interface {
 	// Upsert вставляет или обновляет лексемы пачкой и возвращает их
 	// с присвоенными идентификаторами. Пачкой, а не по одной: сидер грузит
 	// тысячи слов, и тысяча запросов вместо одного превратила бы загрузку
 	// словаря в минуты.
-	Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]lexicon.Lexeme, error)
+	Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]Upserted, error)
 
 	// ByTerm ищет слово по языку и написанию среди встроенных (ownerID = 0)
 	// или личных слов пользователя. Нужен, чтобы при добавлении своего слова
@@ -78,6 +91,11 @@ type DeckRepo interface {
 	// ByCode возвращает встроенную колоду по слагу — так на неё ссылаются
 	// сиды и миграции.
 	ByCode(ctx context.Context, code string) (lexicon.Deck, error)
+
+	// EnsureBuiltin заводит встроенную колоду или обновляет её описание.
+	// Слаг остаётся ключом: по нему сидер узнаёт колоду при повторной
+	// загрузке, и переименование не заводит вторую.
+	EnsureBuiltin(ctx context.Context, deck *lexicon.Deck) (lexicon.Deck, error)
 
 	// EnsurePersonal возвращает личную колоду пользователя для языка
 	// изучения, создавая её при первом добавлении своего слова.

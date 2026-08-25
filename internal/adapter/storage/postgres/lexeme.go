@@ -33,7 +33,7 @@ const lexemeColumns = "id, lang_code, term, reading, example, pos, freq_rank, CO
 // Возвращаются они в том же порядке, в каком пришли: RETURNING отдаёт строки
 // в порядке, удобном базе, и полагаться на него нельзя, а вызывающий (сидер
 // или импорт) сопоставляет результат со своим списком по позиции.
-func (r *LexemeRepo) Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]lexicon.Lexeme, error) {
+func (r *LexemeRepo) Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]port.Upserted, error) {
 	const op = "сохранить лексемы"
 
 	if len(lexemes) == 0 {
@@ -68,6 +68,10 @@ func (r *LexemeRepo) Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]le
 		owners[i] = lex.OwnerID
 	}
 
+	// Условие в DO UPDATE отсекает строки, которые не изменились: они
+	// не переписываются и не попадают в RETURNING. Так сидер видит, что
+	// именно поменялось, а база не переписывает две тысячи строк ради
+	// того, чтобы записать в них ровно то же самое.
 	const query = `
 		INSERT INTO lexemes (lang_code, term, reading, example, pos, freq_rank, owner_user_id)
 		SELECT t.lang_code, t.term, t.reading, t.example, t.pos, t.freq_rank, NULLIF(t.owner_user_id, 0)
@@ -77,18 +81,77 @@ func (r *LexemeRepo) Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]le
 		SET reading   = EXCLUDED.reading,
 		    example   = EXCLUDED.example,
 		    freq_rank = EXCLUDED.freq_rank
-		RETURNING ` + lexemeColumns
+		WHERE (lexemes.reading, lexemes.example, lexemes.freq_rank)
+		      IS DISTINCT FROM (EXCLUDED.reading, EXCLUDED.example, EXCLUDED.freq_rank)
+		RETURNING ` + lexemeColumns + `, (xmax = 0) AS created`
 
 	rows, err := r.db(ctx).Query(ctx, query, langs, terms, readings, examples, parts, ranks, owners)
 	if err != nil {
 		return nil, wrap(op, err)
 	}
 
-	saved, err := collectLexemes(rows)
+	touched, err := collectUpserted(rows)
 	if err != nil {
 		return nil, wrap(op, err)
 	}
-	return orderLike(unique, saved, lexemeKey), nil
+
+	// Строки, которых нет в ответе, остались как были — их идентификаторы
+	// всё равно нужны: на них ссылаются переводы и состав колоды.
+	unchanged, err := r.byKeys(ctx, unique, touched)
+	if err != nil {
+		return nil, err
+	}
+
+	return orderUpserted(unique, append(touched, unchanged...)), nil
+}
+
+// byKeys дочитывает слова, которых не оказалось в ответе на запись.
+func (r *LexemeRepo) byKeys(ctx context.Context, wanted []lexicon.Lexeme, touched []port.Upserted) ([]port.Upserted, error) {
+	const op = "получить неизменившиеся слова"
+
+	known := make(map[string]bool, len(touched))
+	for i := range touched {
+		known[lexemeKey(&touched[i].Lexeme)] = true
+	}
+
+	var (
+		langs  []string
+		terms  []string
+		parts  []string
+		owners []int64
+	)
+	for i := range wanted {
+		if known[lexemeKey(&wanted[i])] {
+			continue
+		}
+		langs = append(langs, wanted[i].Lang.String())
+		terms = append(terms, wanted[i].Term)
+		parts = append(parts, string(wanted[i].POS))
+		owners = append(owners, wanted[i].OwnerID)
+	}
+	if len(langs) == 0 {
+		return nil, nil
+	}
+
+	const query = "SELECT " + lexemeColumns + ` FROM lexemes
+		WHERE (lang_code, term, pos, COALESCE(owner_user_id, 0)) IN (
+			SELECT * FROM unnest($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::BIGINT[])
+		)`
+
+	rows, err := r.db(ctx).Query(ctx, query, langs, terms, parts, owners)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	lexemes, err := collectLexemes(rows)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+
+	out := make([]port.Upserted, 0, len(lexemes))
+	for i := range lexemes {
+		out = append(out, port.Upserted{Lexeme: lexemes[i]})
+	}
+	return out, nil
 }
 
 // ByTerm ищет слово по языку и написанию: среди встроенных при ownerID = 0,
@@ -245,12 +308,23 @@ func (r *LexemeRepo) Translations(ctx context.Context, ids []lexicon.LexemeID, l
 }
 
 func scanLexeme(r row, lex *lexicon.Lexeme) error {
+	return scanLexemeWith(r, lex, nil)
+}
+
+// scanLexemeWith читает лексему, а при непустом created — ещё и признак
+// того, что строка только что создана.
+func scanLexemeWith(r row, lex *lexicon.Lexeme, created *bool) error {
 	var (
 		id       int64
 		langCode string
 		pos      string
 	)
-	if err := r.Scan(&id, &langCode, &lex.Term, &lex.Reading, &lex.Example, &pos, &lex.FreqRank, &lex.OwnerID); err != nil {
+
+	dest := []any{&id, &langCode, &lex.Term, &lex.Reading, &lex.Example, &pos, &lex.FreqRank, &lex.OwnerID}
+	if created != nil {
+		dest = append(dest, created)
+	}
+	if err := r.Scan(dest...); err != nil {
 		return err
 	}
 
@@ -262,6 +336,40 @@ func scanLexeme(r row, lex *lexicon.Lexeme) error {
 	lex.Lang = lang
 	lex.POS = lexicon.PartOfSpeech(pos)
 	return nil
+}
+
+// collectUpserted читает строки записи вместе с признаком «создана».
+func collectUpserted(rows pgx.Rows) ([]port.Upserted, error) {
+	defer rows.Close()
+
+	var out []port.Upserted
+	for rows.Next() {
+		var (
+			lex     lexicon.Lexeme
+			created bool
+		)
+		if err := scanLexemeWith(rows, &lex, &created); err != nil {
+			return nil, err
+		}
+		out = append(out, port.Upserted{Lexeme: lex, Created: created, Changed: !created})
+	}
+	return out, rows.Err()
+}
+
+// orderUpserted раскладывает результат записи в порядке исходного списка.
+func orderUpserted(want []lexicon.Lexeme, got []port.Upserted) []port.Upserted {
+	byKey := make(map[string]port.Upserted, len(got))
+	for i := range got {
+		byKey[lexemeKey(&got[i].Lexeme)] = got[i]
+	}
+
+	out := make([]port.Upserted, 0, len(want))
+	for i := range want {
+		if saved, ok := byKey[lexemeKey(&want[i])]; ok {
+			out = append(out, saved)
+		}
+	}
+	return out
 }
 
 func collectLexemes(rows pgx.Rows) ([]lexicon.Lexeme, error) {
@@ -305,22 +413,6 @@ func dedupe[T any](items []T, key func(*T) string) []T {
 		}
 		positions[k] = len(out)
 		out = append(out, items[i])
-	}
-	return out
-}
-
-// orderLike раскладывает сохранённые строки в порядке исходного списка.
-func orderLike[T any](want, got []T, key func(*T) string) []T {
-	byKey := make(map[string]T, len(got))
-	for i := range got {
-		byKey[key(&got[i])] = got[i]
-	}
-
-	out := make([]T, 0, len(want))
-	for i := range want {
-		if saved, ok := byKey[key(&want[i])]; ok {
-			out = append(out, saved)
-		}
 	}
 	return out
 }

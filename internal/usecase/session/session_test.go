@@ -187,7 +187,7 @@ type fakeLexemes struct {
 	translations map[lexicon.LexemeID][]lexicon.Translation
 }
 
-func (f *fakeLexemes) Upsert(context.Context, []lexicon.Lexeme) ([]lexicon.Lexeme, error) {
+func (f *fakeLexemes) Upsert(context.Context, []lexicon.Lexeme) ([]port.Upserted, error) {
 	return nil, nil
 }
 
@@ -600,6 +600,11 @@ func (f *fakeDecks) ByID(context.Context, lexicon.DeckID) (lexicon.Deck, error) 
 func (f *fakeDecks) ByCode(context.Context, string) (lexicon.Deck, error) {
 	return lexicon.Deck{}, port.ErrNotFound
 }
+func (f *fakeDecks) EnsureBuiltin(context.Context, *lexicon.Deck) (lexicon.Deck, error) {
+	// Сессия колод не создаёт.
+	return lexicon.Deck{}, nil
+}
+
 func (f *fakeDecks) EnsurePersonal(context.Context, int64, lexicon.Language, string) (lexicon.Deck, error) {
 	return lexicon.Deck{}, nil
 }

@@ -381,32 +381,34 @@ func texts(translations []lexicon.Translation) []string {
 // спрашивается одинаково, и тест может это проверить. Случайный выбор
 // давал бы то же чередование, но проверить его было бы нечем.
 //
-// Новое слово всегда показывается узнаванием: напечатать перевод слова,
-// которого человек ни разу не видел, невозможно, и спрашивать его так —
-// значит гарантированно засчитать провал.
+// У слова, которое человек видит впервые, отпадает только ввод текстом:
+// напечатать перевод незнакомого слова невозможно, и спрашивать так —
+// значит гарантированно засчитать провал. Выбор из четырёх вариантов,
+// наоборот, ровно тем и хорош: это нормальный способ познакомиться
+// со словом, а не проверка того, чего человек ещё не знает.
 func PickMode(enabled []study.Mode, card *study.Card) study.Mode {
-	if len(enabled) == 0 {
+	usable := enabled
+	if card.State == study.StateNew || card.IsNew() {
+		usable = withoutTyping(enabled)
+	}
+	if len(usable) == 0 {
 		return study.ModeRecall
 	}
-	if card.State == study.StateNew || card.IsNew() {
-		if contains(enabled, study.ModeRecall) {
-			return study.ModeRecall
-		}
-		return enabled[0]
-	}
 
-	index := (int64(card.ID) + int64(card.Repetitions)) % int64(len(enabled))
+	index := (int64(card.ID) + int64(card.Repetitions)) % int64(len(usable))
 	if index < 0 {
 		index = -index
 	}
-	return enabled[index]
+	return usable[index]
 }
 
-func contains(modes []study.Mode, wanted study.Mode) bool {
+// withoutTyping убирает ввод текстом из набора режимов.
+func withoutTyping(modes []study.Mode) []study.Mode {
+	out := make([]study.Mode, 0, len(modes))
 	for _, mode := range modes {
-		if mode == wanted {
-			return true
+		if mode != study.ModeTyping {
+			out = append(out, mode)
 		}
 	}
-	return false
+	return out
 }

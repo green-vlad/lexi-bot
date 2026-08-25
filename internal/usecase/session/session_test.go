@@ -497,11 +497,12 @@ func TestPickMode(t *testing.T) {
 
 	all := study.Modes()
 
-	// Новое слово всегда спрашивается узнаванием: напечатать перевод слова,
-	// которого человек ни разу не видел, невозможно.
+	// У нового слова отпадает только ввод текстом: напечатать перевод
+	// незнакомого слова невозможно. Выбор из четырёх, наоборот, — нормальный
+	// способ познакомиться со словом.
 	newCard := study.Card{ID: 7, CardState: study.CardState{State: study.StateNew}}
-	if got := session.PickMode(all, &newCard); got != study.ModeRecall {
-		t.Errorf("новое слово = %v, ожидалось recall", got)
+	if got := session.PickMode(all, &newCard); got == study.ModeTyping {
+		t.Error("новое слово нельзя спрашивать вводом текста")
 	}
 
 	// Выученная карточка чередует режимы, но детерминированно: одно и то же
@@ -528,8 +529,16 @@ func TestPickMode(t *testing.T) {
 	if got := session.PickMode(only, &card); got != study.ModeTyping {
 		t.Errorf("режим = %v, ожидался единственный включённый", got)
 	}
-	if got := session.PickMode(only, &newCard); got != study.ModeTyping {
-		t.Errorf("новое слово при единственном режиме = %v", got)
+	// А если единственный включённый режим новому слову не годится,
+	// оно спрашивается узнаванием — лучше так, чем провалить его сразу.
+	if got := session.PickMode(only, &newCard); got != study.ModeRecall {
+		t.Errorf("новое слово при единственном режиме = %v, ожидалось recall", got)
+	}
+
+	// Выбор из четырёх новому слову годится.
+	choiceOnly := []study.Mode{study.ModeChoice}
+	if got := session.PickMode(choiceOnly, &newCard); got != study.ModeChoice {
+		t.Errorf("новое слово = %v, ожидался выбор из вариантов", got)
 	}
 
 	// Пустой набор — это ошибка настроек, но сессия из-за неё не встаёт.
@@ -852,6 +861,20 @@ func TestTypingOnlyTowardsStudiedLanguage(t *testing.T) {
 	}
 
 	f.settings.settings.ReverseDirection = true
+	item, _ = f.next(t)
+	// Слово всё ещё новое: даже в обратную сторону печатать незнакомое
+	// слово невозможно, поэтому спрашиваем узнаванием.
+	if item.Mode != study.ModeRecall {
+		t.Errorf("режим = %v, ожидалось узнавание для нового слова", item.Mode)
+	}
+
+	// А у слова, которое человек уже видел, ввод текстом появляется.
+	for i := range f.cards.cards {
+		f.cards.cards[i].State = study.StateReview
+		f.cards.cards[i].Repetitions = 2
+		f.cards.cards[i].LastReviewedAt = f.now.Add(-time.Hour)
+		f.cards.cards[i].DueAt = f.now.Add(-time.Minute)
+	}
 	item, _ = f.next(t)
 	if item.Mode != study.ModeTyping {
 		t.Errorf("режим = %v, ожидался ввод текстом", item.Mode)

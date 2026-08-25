@@ -141,6 +141,30 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	return f
 }
 
+// seen делает слова уже знакомыми: ввод текстом не предлагается словам,
+// которые человек видит впервые, — напечатать незнакомое слово нельзя.
+func (f *learnFixture) seen(t *testing.T) {
+	t.Helper()
+
+	for i, id := range f.cards.pool {
+		f.cards.nextID++
+		f.cards.cards = append(f.cards.cards, study.Card{
+			ID:       f.cards.nextID,
+			CourseID: f.cards.courseID,
+			LexemeID: id,
+			CardState: study.CardState{
+				// Первое слово ждёт дольше всех: очередь идёт по сроку,
+				// и тесты рассчитывают на порядок из файла.
+				State:        study.StateReview,
+				DueAt:        f.now.Add(-time.Duration(len(f.cards.pool)-i) * time.Minute),
+				IntervalDays: 1, EaseFactor: 2.5, Repetitions: 2,
+			},
+			IntroducedAt:   f.now.AddDate(0, 0, -3),
+			LastReviewedAt: f.now.AddDate(0, 0, -1),
+		})
+	}
+}
+
 // reverse переключает курс на проверку в сторону изучаемого языка:
 // только там разрешён ввод текстом.
 func (f *learnFixture) reverse(t *testing.T) {
@@ -478,6 +502,7 @@ func TestLearnTypingCorrectAnswer(t *testing.T) {
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
 	f.reverse(t)
+	f.seen(t)
 
 	f.send(t, "/learn")
 	text, buttons := f.screen(t)
@@ -520,6 +545,7 @@ func TestLearnTypingTypoShowsSpelling(t *testing.T) {
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
 	f.reverse(t)
+	f.seen(t)
 
 	// Опечатки прощаются словам от четырёх символов (T-010), а корейские
 	// слова часто короче: берём подлиннее, иначе проверять нечего.
@@ -558,6 +584,7 @@ func TestLearnTypingWrongAnswer(t *testing.T) {
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
 	f.reverse(t)
+	f.seen(t)
 
 	f.send(t, "/learn")
 	f.send(t, "совсем не то")
@@ -577,7 +604,9 @@ func TestLearnTypingWrongAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ByID() вернул ошибку: %v", err)
 	}
-	if card.LearnStep != 0 || card.State != study.StateLearning {
+	// Промах на выученной карточке — это провал: она уходит в переобучение
+	// и получает засечку в счётчике забытых.
+	if card.State != study.StateRelearning || card.Lapses != 1 {
 		t.Errorf("состояние после промаха = %+v", card.CardState)
 	}
 }
@@ -587,6 +616,7 @@ func TestLearnTypingIgnoresCommands(t *testing.T) {
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
 	f.reverse(t)
+	f.seen(t)
 
 	f.send(t, "/learn")
 	if _, ok := f.sessions.current(t); !ok {
@@ -605,8 +635,8 @@ func TestLearnTypingIgnoresCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ByID() вернул ошибку: %v", err)
 	}
-	if !card.IsNew() {
-		t.Error("команда не должна засчитываться ответом на карточку")
+	if !card.LastReviewedAt.Equal(f.now.AddDate(0, 0, -1)) {
+		t.Error("команда засчиталась ответом: карточка сдвинулась")
 	}
 }
 
@@ -615,6 +645,7 @@ func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
 	f.reverse(t)
+	f.seen(t)
 
 	f.send(t, "/learn")
 	f.send(t, "   ")
@@ -629,7 +660,7 @@ func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ByID() вернул ошибку: %v", err)
 	}
-	if !card.IsNew() {
+	if !card.LastReviewedAt.Equal(f.now.AddDate(0, 0, -1)) {
 		t.Error("пустое сообщение засчиталось ответом")
 	}
 }

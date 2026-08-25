@@ -83,6 +83,37 @@ func (r *DeckRepo) Distractors(ctx context.Context, q port.DistractorQuery) ([]l
 	return out, nil
 }
 
+// DistractorTerms возвращает слова колоды — ложные варианты для проверки
+// в сторону изучаемого языка.
+//
+// Переводы здесь не нужны вовсе: выбирать человек будет из написаний,
+// и слово без перевода на язык курса ложным вариантом быть вполне может.
+func (r *DeckRepo) DistractorTerms(ctx context.Context, q port.DistractorQuery) ([]lexicon.Lexeme, error) {
+	const op = "подобрать ложные варианты"
+
+	if q.Limit <= 0 {
+		return nil, nil
+	}
+
+	const query = `
+		SELECT ` + lexemeColumns + `
+		FROM lexemes l
+		JOIN deck_items di ON di.lexeme_id = l.id
+		WHERE di.deck_id = $1 AND di.lexeme_id <> $2
+		ORDER BY (l.pos = $3) DESC, random()
+		LIMIT $4`
+
+	rows, err := r.db(ctx).Query(ctx, query, int64(q.DeckID), int64(q.Exclude), string(q.POS), q.Limit)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	lexemes, err := collectLexemes(rows)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	return lexemes, nil
+}
+
 // Languages возвращает языки, для которых есть встроенные колоды.
 func (r *DeckRepo) Languages(ctx context.Context) ([]lexicon.Language, error) {
 	const op = "получить языки изучения"

@@ -203,6 +203,10 @@ type stubDeckSource struct {
 	translations map[lexicon.LexemeID][]lexicon.Translation
 }
 
+func (s *stubDeckSource) DistractorTerms(context.Context, port.DistractorQuery) ([]lexicon.Lexeme, error) {
+	return nil, nil
+}
+
 func (s *stubDeckSource) Distractors(_ context.Context, q port.DistractorQuery) ([]lexicon.Translation, error) {
 	var out []lexicon.Translation
 	for id, list := range s.translations {

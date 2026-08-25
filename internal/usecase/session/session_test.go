@@ -555,6 +555,7 @@ func mustScheduler(t *testing.T) study.Scheduler {
 // обязана пережить.
 type fakeDecks struct {
 	distractors []lexicon.Translation
+	terms       []lexicon.Lexeme
 }
 
 func (f *fakeDecks) Distractors(_ context.Context, q port.DistractorQuery) ([]lexicon.Translation, error) {
@@ -567,6 +568,21 @@ func (f *fakeDecks) Distractors(_ context.Context, q port.DistractorQuery) ([]le
 			break
 		}
 		out = append(out, tr)
+	}
+	return out, nil
+}
+
+// DistractorTerms отдаёт слова колоды: ими проверяется обратное направление.
+func (f *fakeDecks) DistractorTerms(_ context.Context, q port.DistractorQuery) ([]lexicon.Lexeme, error) {
+	out := make([]lexicon.Lexeme, 0, len(f.terms))
+	for i := range f.terms {
+		if f.terms[i].ID == q.Exclude {
+			continue
+		}
+		if q.Limit > 0 && len(out) >= q.Limit {
+			break
+		}
+		out = append(out, f.terms[i])
 	}
 	return out, nil
 }
@@ -776,4 +792,97 @@ func (s *switchableReviews) ActiveDays(ctx context.Context, userID user.ID, tz u
 		return nil, nil
 	}
 	return s.inner.ActiveDays(ctx, userID, tz, since)
+}
+
+func TestDirectionChangesQuestionAndAnswer(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 3)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeRecall}
+
+	// По умолчанию спрашиваем на узнавание: показываем слово, ждём перевод.
+	item, _ := f.next(t)
+	if item.Direction != study.DirectionRecognize {
+		t.Fatalf("направление = %v", item.Direction)
+	}
+	if item.Question != "слово" {
+		t.Errorf("вопрос = %q, ожидалось слово изучаемого языка", item.Question)
+	}
+	if len(item.Answer) != 1 || item.Answer[0] != "перевод" {
+		t.Errorf("ответ = %v, ожидался перевод", item.Answer)
+	}
+	if item.AnswerLang != langRU {
+		t.Errorf("язык ответа = %v, ожидался язык перевода", item.AnswerLang)
+	}
+
+	// Обратное направление: показываем перевод, ждём слово.
+	f.settings.settings.ReverseDirection = true
+	item, _ = f.next(t)
+	if item.Direction != study.DirectionProduce {
+		t.Fatalf("направление = %v", item.Direction)
+	}
+	if item.Question != "перевод" {
+		t.Errorf("вопрос = %q, ожидался перевод", item.Question)
+	}
+	if len(item.Answer) != 1 || item.Answer[0] != "слово" {
+		t.Errorf("ответ = %v, ожидалось слово изучаемого языка", item.Answer)
+	}
+	if item.AnswerLang != langKO {
+		t.Errorf("язык ответа = %v, ожидался изучаемый язык", item.AnswerLang)
+	}
+}
+
+func TestTypingOnlyTowardsStudiedLanguage(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 3)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeTyping}
+
+	// Печатать перевод на родной язык бессмысленно: у слова несколько
+	// равноправных значений, и свободный ввод превращается в угадывание
+	// того, какое из них мы сочли основным.
+	item, _ := f.next(t)
+	if item.Mode == study.ModeTyping {
+		t.Error("ввод текстом не должен предлагаться в сторону родного языка")
+	}
+
+	f.settings.settings.ReverseDirection = true
+	item, _ = f.next(t)
+	if item.Mode != study.ModeTyping {
+		t.Errorf("режим = %v, ожидался ввод текстом", item.Mode)
+	}
+}
+
+func TestChoiceOptionsMatchDirection(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 5)
+	f.settings.settings.QuizModes = []study.Mode{study.ModeChoice}
+	f.settings.settings.ReverseDirection = true
+	f.decks.terms = []lexicon.Lexeme{
+		{ID: 2, Lang: langKO, Term: "개"},
+		{ID: 3, Lang: langKO, Term: "물"},
+		{ID: 4, Lang: langKO, Term: "불"},
+	}
+	f.decks.distractors = []lexicon.Translation{
+		{LexemeID: 2, Lang: langRU, Text: "собака", IsPrimary: true},
+	}
+
+	// Выбирать нужно из того же, что и ответ: раз ждём слово изучаемого
+	// языка, то и варианты должны быть словами, а не переводами.
+	item, _ := f.next(t)
+	if item.Mode != study.ModeChoice {
+		t.Fatalf("режим = %v", item.Mode)
+	}
+	if len(item.Options) != session.ChoiceOptions {
+		t.Fatalf("вариантов %d: %v", len(item.Options), item.Options)
+	}
+	if item.Options[item.Correct] != "слово" {
+		t.Errorf("правильный вариант = %q", item.Options[item.Correct])
+	}
+	for _, option := range item.Options {
+		if option == "собака" {
+			t.Errorf("среди вариантов оказался перевод: %v", item.Options)
+		}
+	}
 }

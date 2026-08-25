@@ -85,6 +85,7 @@ func TestLanguageSwitch(t *testing.T) {
 	keyboard := f.messenger.last(t).Keyboard
 	if keyboard == nil {
 		t.Fatal("выбор языка без кнопок")
+		return
 	}
 
 	var codes []string

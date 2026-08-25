@@ -94,17 +94,22 @@ func setup() (*database, error) {
 		return nil, err
 	}
 
-	if err := migrateSchema(ctx, dsn); err != nil {
-		return nil, err
-	}
-
 	pool, err := postgres.NewPool(ctx, postgres.DefaultPoolConfig(dsn))
 	if err != nil {
 		return nil, err
 	}
 
+	// Очередь занимается до накатывания схемы, а не после. Иначе два
+	// тестовых процесса одновременно видят старую версию и одновременно
+	// применяют новую миграцию: один из них падает на «колонка уже
+	// существует». Пока новых миграций не появлялось, этого не было видно.
 	lock, err := takeDatabase(ctx, pool)
 	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+
+	if err := migrateSchema(ctx, dsn); err != nil {
 		pool.Close()
 		return nil, err
 	}

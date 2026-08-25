@@ -51,8 +51,13 @@ type DistractorQuery struct {
 // DeckRepo хранит колоды и их состав.
 type DeckRepo interface {
 	// Distractors возвращает переводы других слов колоды — из них
-	// собираются ложные варианты ответа.
+	// собираются ложные варианты ответа при проверке на узнавание.
 	Distractors(ctx context.Context, q DistractorQuery) ([]lexicon.Translation, error)
+
+	// DistractorTerms возвращает сами слова колоды: они нужны, когда
+	// спрашивают в обратную сторону и выбирать надо из слов изучаемого
+	// языка, а не из переводов.
+	DistractorTerms(ctx context.Context, q DistractorQuery) ([]lexicon.Lexeme, error)
 
 	// Languages возвращает языки, для которых есть встроенные колоды:
 	// из них состоит первый вопрос онбординга. Спрашивать по справочнику

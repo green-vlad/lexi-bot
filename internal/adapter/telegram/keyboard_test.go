@@ -28,6 +28,7 @@ func TestKeyboardRows(t *testing.T) {
 	}
 	if kb == nil {
 		t.Fatal("клавиатура не собралась")
+		return
 	}
 
 	if len(kb.Rows) != 2 {

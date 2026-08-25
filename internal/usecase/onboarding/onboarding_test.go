@@ -82,6 +82,10 @@ func (f *fakeDecks) EnsurePersonal(context.Context, int64, lexicon.Language, str
 }
 func (f *fakeDecks) AddItems(context.Context, []lexicon.DeckItem) error { return nil }
 
+func (f *fakeDecks) DistractorTerms(context.Context, port.DistractorQuery) ([]lexicon.Lexeme, error) {
+	return nil, nil
+}
+
 func (f *fakeDecks) Distractors(context.Context, port.DistractorQuery) ([]lexicon.Translation, error) {
 	return nil, nil
 }

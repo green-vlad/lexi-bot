@@ -22,6 +22,7 @@ type learnFixture struct {
 	reviews   *stubReviews
 	rand      *stubRand
 	sessions  *fakeSessions
+	lexemes   *stubLexemes
 	cards     *stubCards
 	courses   *stubCourses
 	settings  *stubSettings
@@ -67,6 +68,7 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		translations[id] = []lexicon.Translation{{LexemeID: id, Lang: langRU, Text: meanings[i], IsPrimary: true}}
 	}
 	f.cards = newStubCards(pool, course.ID)
+	f.lexemes = &stubLexemes{lexemes: lexemes, translations: translations}
 	f.decks = &stubDeckSource{translations: translations}
 	f.reviews = &stubReviews{}
 	// Порядок вариантов фиксирован: тест должен знать, где правильный.
@@ -86,7 +88,7 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		Counters:  f.cards.counters,
 		Courses:   f.courses,
 		Settings:  f.settings,
-		Lexemes:   &stubLexemes{lexemes: lexemes, translations: translations},
+		Lexemes:   f.lexemes,
 		Clock:     clock,
 		Scheduler: scheduler,
 		Resolver:  study.DefaultRatingResolver(),
@@ -120,6 +122,16 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	// Посторонняя команда, на которой проверяется прерывание ожидания ввода.
 	f.router.Command("help", telegram.Reply(f.messenger, "help.text"))
 	return f
+}
+
+// reverse переключает курс на проверку в сторону изучаемого языка:
+// только там разрешён ввод текстом.
+func (f *learnFixture) reverse(t *testing.T) {
+	t.Helper()
+
+	settings := f.settings.byUser[1]
+	settings.ReverseDirection = true
+	f.settings.byUser[1] = settings
 }
 
 func (f *learnFixture) send(t *testing.T, text string) {
@@ -448,14 +460,16 @@ func TestLearnTypingCorrectAnswer(t *testing.T) {
 	t.Parallel()
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
+	f.reverse(t)
 
 	f.send(t, "/learn")
 	text, buttons := f.screen(t)
 	if len(buttons) != 0 {
 		t.Errorf("в режиме ввода кнопок быть не должно: %v", buttons)
 	}
-	if !strings.Contains(text, "집") {
-		t.Errorf("на карточке %q, ожидалось слово", text)
+	// Спрашиваем в сторону изучаемого языка: показан перевод, ждём слово.
+	if !strings.Contains(text, "дом") {
+		t.Errorf("на карточке %q, ожидался перевод", text)
 	}
 
 	// Бот перешёл в ожидание ответа: без этого он не отличил бы перевод
@@ -464,15 +478,15 @@ func TestLearnTypingCorrectAnswer(t *testing.T) {
 		t.Fatalf("состояние диалога = %+v, ожидалось ожидание ввода", dialog)
 	}
 
-	f.send(t, "дом")
+	f.send(t, "집")
 
 	// Разбор показан правкой карточки, а следующее слово — новым сообщением.
 	if got := f.messenger.edits[len(f.messenger.edits)-1].Text; !strings.Contains(got, "Верно") {
 		t.Errorf("разбор = %q, ожидалось подтверждение", got)
 	}
 	text, _ = f.screen(t)
-	if !strings.Contains(text, "개") {
-		t.Errorf("после верного ответа %q, ожидалось следующее слово", text)
+	if !strings.Contains(text, "собака") {
+		t.Errorf("после верного ответа %q, ожидался следующий перевод", text)
 	}
 
 	card, err := f.cards.ByID(context.Background(), 1)
@@ -488,26 +502,25 @@ func TestLearnTypingTypoShowsSpelling(t *testing.T) {
 	t.Parallel()
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
+	f.reverse(t)
+
+	// Опечатки прощаются словам от четырёх символов (T-010), а корейские
+	// слова часто короче: берём подлиннее, иначе проверять нечего.
+	long := f.lexemes.lexemes[1]
+	long.Term = "초등학생"
+	f.lexemes.lexemes[1] = long
 
 	f.send(t, "/learn")
-	// Первое слово — «дом»: опечатки в трёхбуквенных словах не прощаются
-	// (T-010), поэтому проверяем на следующем, подлиннее.
-	f.send(t, "дом")
-
-	text, _ := f.screen(t)
-	if !strings.Contains(text, "개") {
-		t.Fatalf("подготовка теста: на экране %q", text)
-	}
 
 	// Опечатка в один символ засчитывается, но человек должен увидеть,
 	// как пишется правильно, — иначе он выучит свою опечатку.
-	f.send(t, "сабака")
+	f.send(t, "초등학샹")
 
 	text, buttons := f.screen(t)
 	if !strings.Contains(text, "Почти") {
 		t.Errorf("разбор = %q, ожидалось «почти»", text)
 	}
-	if !strings.Contains(text, "собака") || !strings.Contains(text, "сабака") {
+	if !strings.Contains(text, "초등학생") || !strings.Contains(text, "초등학샹") {
 		t.Errorf("разбор = %q, ожидались оба написания", text)
 	}
 	// После опечатки сессия ждёт нажатия «дальше»: проскакивать мимо
@@ -518,8 +531,8 @@ func TestLearnTypingTypoShowsSpelling(t *testing.T) {
 
 	f.press(t, buttons[0])
 	text, _ = f.screen(t)
-	if !strings.Contains(text, "물") {
-		t.Errorf("после «дальше» %q, ожидалось следующее слово", text)
+	if !strings.Contains(text, "собака") {
+		t.Errorf("после «дальше» %q, ожидался следующий перевод", text)
 	}
 }
 
@@ -527,13 +540,14 @@ func TestLearnTypingWrongAnswer(t *testing.T) {
 	t.Parallel()
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
+	f.reverse(t)
 
 	f.send(t, "/learn")
 	f.send(t, "совсем не то")
 
 	text, buttons := f.screen(t)
-	if !strings.Contains(text, "дом") {
-		t.Errorf("разбор = %q, ожидался правильный перевод", text)
+	if !strings.Contains(text, "집") {
+		t.Errorf("разбор = %q, ожидалось правильное слово", text)
 	}
 	if !strings.Contains(text, "совсем не то") {
 		t.Errorf("разбор = %q, ожидался введённый ответ", text)
@@ -555,6 +569,7 @@ func TestLearnTypingIgnoresCommands(t *testing.T) {
 	t.Parallel()
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
+	f.reverse(t)
 
 	f.send(t, "/learn")
 	if _, ok := f.sessions.current(t); !ok {
@@ -582,6 +597,7 @@ func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
 	t.Parallel()
 
 	f := newLearnFixture(t, 3, study.ModeTyping)
+	f.reverse(t)
 
 	f.send(t, "/learn")
 	f.send(t, "   ")

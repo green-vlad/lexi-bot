@@ -26,7 +26,7 @@ var _ port.LexemeRepo = (*LexemeRepo)(nil)
 // lexemeColumns: владелец наружу отдаётся нулём вместо NULL — в домене
 // «встроенное слово» это ноль, и переводить одно в другое приходится
 // на границе, а не в каждом сценарии.
-const lexemeColumns = "id, lang_code, term, reading, pos, freq_rank, COALESCE(owner_user_id, 0)"
+const lexemeColumns = "id, lang_code, term, reading, example, pos, freq_rank, COALESCE(owner_user_id, 0)"
 
 // Upsert вставляет или обновляет лексемы одним запросом.
 //
@@ -54,6 +54,7 @@ func (r *LexemeRepo) Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]le
 	langs := make([]string, len(unique))
 	terms := make([]string, len(unique))
 	readings := make([]string, len(unique))
+	examples := make([]string, len(unique))
 	parts := make([]string, len(unique))
 	ranks := make([]int32, len(unique))
 	owners := make([]int64, len(unique))
@@ -61,22 +62,24 @@ func (r *LexemeRepo) Upsert(ctx context.Context, lexemes []lexicon.Lexeme) ([]le
 		langs[i] = lex.Lang.String()
 		terms[i] = lex.Term
 		readings[i] = lex.Reading
+		examples[i] = lex.Example
 		parts[i] = string(lex.POS)
 		ranks[i] = int32(lex.FreqRank)
 		owners[i] = lex.OwnerID
 	}
 
 	const query = `
-		INSERT INTO lexemes (lang_code, term, reading, pos, freq_rank, owner_user_id)
-		SELECT t.lang_code, t.term, t.reading, t.pos, t.freq_rank, NULLIF(t.owner_user_id, 0)
-		FROM unnest($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::INT[], $6::BIGINT[])
-			AS t(lang_code, term, reading, pos, freq_rank, owner_user_id)
+		INSERT INTO lexemes (lang_code, term, reading, example, pos, freq_rank, owner_user_id)
+		SELECT t.lang_code, t.term, t.reading, t.example, t.pos, t.freq_rank, NULLIF(t.owner_user_id, 0)
+		FROM unnest($1::TEXT[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::TEXT[], $6::INT[], $7::BIGINT[])
+			AS t(lang_code, term, reading, example, pos, freq_rank, owner_user_id)
 		ON CONFLICT (lang_code, term, pos, COALESCE(owner_user_id, 0)) DO UPDATE
 		SET reading   = EXCLUDED.reading,
+		    example   = EXCLUDED.example,
 		    freq_rank = EXCLUDED.freq_rank
 		RETURNING ` + lexemeColumns
 
-	rows, err := r.db(ctx).Query(ctx, query, langs, terms, readings, parts, ranks, owners)
+	rows, err := r.db(ctx).Query(ctx, query, langs, terms, readings, examples, parts, ranks, owners)
 	if err != nil {
 		return nil, wrap(op, err)
 	}
@@ -247,7 +250,7 @@ func scanLexeme(r row, lex *lexicon.Lexeme) error {
 		langCode string
 		pos      string
 	)
-	if err := r.Scan(&id, &langCode, &lex.Term, &lex.Reading, &pos, &lex.FreqRank, &lex.OwnerID); err != nil {
+	if err := r.Scan(&id, &langCode, &lex.Term, &lex.Reading, &lex.Example, &pos, &lex.FreqRank, &lex.OwnerID); err != nil {
 		return err
 	}
 

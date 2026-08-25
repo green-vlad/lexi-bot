@@ -61,6 +61,9 @@ type Lexeme struct {
 	Term    string
 	Reading string // транскрипция или романизация; пусто, если языку не нужна
 	POS     PartOfSpeech
+	// Example — слово в живой фразе. Написан на изучаемом языке и потому
+	// живёт на лексеме, а не на переводе.
+	Example string
 	// FreqRank — место в частотном списке, 1 — самое частое слово.
 	// Ноль означает «частотность неизвестна» и ставит слово в конец очереди.
 	FreqRank int
@@ -75,6 +78,7 @@ type LexemeParams struct {
 	Lang     Language
 	Term     string
 	Reading  string
+	Example  string
 	POS      PartOfSpeech
 	FreqRank int
 	OwnerID  int64
@@ -92,11 +96,16 @@ func NewLexeme(p LexemeParams) (Lexeme, error) {
 	if err != nil {
 		return Lexeme{}, err
 	}
+	example, err := cleanText("example", p.Example, MaxExampleLen)
+	if err != nil {
+		return Lexeme{}, err
+	}
 
 	lex := Lexeme{
 		Lang:     p.Lang,
 		Term:     term,
 		Reading:  reading,
+		Example:  example,
 		POS:      p.POS,
 		FreqRank: p.FreqRank,
 		OwnerID:  p.OwnerID,

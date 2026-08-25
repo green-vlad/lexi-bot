@@ -14,6 +14,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	github.com/testcontainers/testcontainers-go v0.44.0
 	golang.org/x/text v0.40.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -77,5 +78,4 @@ require (
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	golang.org/x/vuln v1.7.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

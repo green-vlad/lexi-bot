@@ -493,6 +493,10 @@ func (s *stubDecks) EnsurePersonal(context.Context, int64, lexicon.Language, str
 }
 func (s *stubDecks) AddItems(context.Context, []lexicon.DeckItem) error { return nil }
 
+func (s *stubDecks) DistractorTerms(context.Context, port.DistractorQuery) ([]lexicon.Lexeme, error) {
+	return nil, nil
+}
+
 func (s *stubDecks) Distractors(context.Context, port.DistractorQuery) ([]lexicon.Translation, error) {
 	return nil, nil
 }

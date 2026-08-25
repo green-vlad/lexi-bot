@@ -430,9 +430,11 @@ func (l *Learn) show(ctx context.Context, u *port.Update) error {
 		return err
 	}
 
+	// В самооценке показываем обе стороны: и то, что спрашивали,
+	// и то, что человек должен был вспомнить.
 	text, err := localizer.T("learn.revealed", port.Args{
-		"Term":        item.Lexeme.Term,
-		"Translation": strings.Join(translationTexts(item.Translations), ", "),
+		"Term":        item.Question,
+		"Translation": strings.Join(item.Answer, ", "),
 	})
 	if err != nil {
 		return err
@@ -642,23 +644,18 @@ func (l *Learn) localizer(ctx context.Context) (port.Localizer, error) {
 	return localizer, nil
 }
 
-// cardText рисует вопрос: слово и, если он есть, способ его прочесть.
+// cardText рисует вопрос.
+//
+// Способ прочтения показывается только там, где спрашивают слово изучаемого
+// языка: в обратную сторону он был бы подсказкой с ответом.
 func cardText(localizer port.Localizer, item *session.Item) (string, error) {
-	if item.Lexeme.Reading != "" {
+	if item.Direction == study.DirectionRecognize && item.Lexeme.Reading != "" {
 		return localizer.T("learn.card_with_reading", port.Args{
-			"Term":    item.Lexeme.Term,
+			"Term":    item.Question,
 			"Reading": item.Lexeme.Reading,
 		})
 	}
-	return localizer.T("learn.card", port.Args{"Term": item.Lexeme.Term})
-}
-
-func translationTexts(translations []lexicon.Translation) []string {
-	out := make([]string, 0, len(translations))
-	for _, t := range translations {
-		out = append(out, t.Text)
-	}
-	return out
+	return localizer.T("learn.card", port.Args{"Term": item.Question})
 }
 
 // encodeTime и decodeTime переводят момент в компактную строку и обратно.

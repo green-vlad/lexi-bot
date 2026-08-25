@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
@@ -85,6 +86,17 @@ type Item struct {
 	Translations []lexicon.Translation
 	// Mode — как спрашивать это слово.
 	Mode study.Mode
+	// Direction — в какую сторону спрашиваем: узнавание или воспроизведение.
+	Direction study.Direction
+	// Question — что показать пользователю: слово изучаемого языка или его
+	// перевод, смотря по направлению.
+	Question string
+	// Answer — что считается верным ответом. В сторону родного языка
+	// значений может быть несколько, в обратную — слово одно.
+	Answer []string
+	// AnswerLang — язык ответа: по нему нормализуется введённый текст,
+	// и от него зависят правила вроде отбрасывания артиклей.
+	AnswerLang lexicon.Language
 	// Options — варианты ответа для режима выбора, уже перемешанные.
 	// Правильный среди них ровно один.
 	Options []string
@@ -195,7 +207,12 @@ func (s *Service) Card(ctx context.Context, cardID study.CardID) (Item, error) {
 		return Item{}, fmt.Errorf("прочитать настройки: %w", err)
 	}
 
-	item, _, err := s.prepare(ctx, &course, &settings, &card)
+	return s.card(ctx, &course, &settings, &card)
+}
+
+// card собирает карточку к показу по уже известным курсу и настройкам.
+func (s *Service) card(ctx context.Context, course *study.Course, settings *user.Settings, raw *study.Card) (Item, error) {
+	item, _, err := s.prepare(ctx, course, settings, raw)
 	return item, err
 }
 
@@ -221,12 +238,27 @@ func (s *Service) prepare(ctx context.Context, course *study.Course, settings *u
 			card.LexemeID, course.TranslationLang, port.ErrNotFound)
 	}
 
+	direction := settings.Direction()
 	item := Item{
 		Card:         *card,
 		Lexeme:       lexemes[0],
 		Translations: translations[card.LexemeID],
-		Mode:         PickMode(settings.QuizModes, card),
+		Direction:    direction,
+		Mode:         PickMode(direction.Modes(settings.QuizModes), card),
 		Correct:      -1,
+	}
+
+	switch direction {
+	case study.DirectionProduce:
+		// Спрашиваем слово: показываем все его значения, чтобы человек понял,
+		// о чём речь, а ждём написание на изучаемом языке.
+		item.Question = strings.Join(texts(item.Translations), ", ")
+		item.Answer = []string{item.Lexeme.Term}
+		item.AnswerLang = item.Lexeme.Lang
+	default:
+		item.Question = item.Lexeme.Term
+		item.Answer = lexicon.AcceptedAnswers(item.Translations)
+		item.AnswerLang = course.TranslationLang
 	}
 
 	if item.Mode == study.ModeChoice {
@@ -262,9 +294,9 @@ func (s *Service) options(ctx context.Context, course *study.Course, item *Item)
 		return nil, 0, errors.New("для режима выбора нужен DeckRepo")
 	}
 
-	correct := item.Translations[0].Text
+	correct := item.Answer[0]
 
-	distractors, err := s.deps.Decks.Distractors(ctx, port.DistractorQuery{
+	query := port.DistractorQuery{
 		DeckID:  course.DeckID,
 		Lang:    course.TranslationLang,
 		POS:     item.Lexeme.POS,
@@ -272,25 +304,43 @@ func (s *Service) options(ctx context.Context, course *study.Course, item *Item)
 		// Берём с запасом: часть отсеется как совпадающая с правильным
 		// ответом после нормализации.
 		Limit: ChoiceOptions * 3,
-	})
-	if err != nil {
-		return nil, 0, fmt.Errorf("подобрать варианты ответа: %w", err)
+	}
+
+	// Выбирать нужно из того же, что и ответ: в сторону родного языка —
+	// из переводов, в обратную — из слов изучаемого языка.
+	var candidates []string
+	if item.Direction == study.DirectionProduce {
+		lexemes, err := s.deps.Decks.DistractorTerms(ctx, query)
+		if err != nil {
+			return nil, 0, fmt.Errorf("подобрать варианты ответа: %w", err)
+		}
+		for i := range lexemes {
+			candidates = append(candidates, lexemes[i].Term)
+		}
+	} else {
+		distractors, err := s.deps.Decks.Distractors(ctx, query)
+		if err != nil {
+			return nil, 0, fmt.Errorf("подобрать варианты ответа: %w", err)
+		}
+		for i := range distractors {
+			candidates = append(candidates, distractors[i].Text)
+		}
 	}
 
 	options = []string{correct}
-	seen := map[string]bool{lexicon.Normalize(correct, course.TranslationLang): true}
-	for _, distractor := range distractors {
+	seen := map[string]bool{lexicon.Normalize(correct, item.AnswerLang): true}
+	for _, candidate := range candidates {
 		if len(options) >= ChoiceOptions {
 			break
 		}
 		// Сравнение по нормализованной форме: «дом» и «Дом.» — один вариант,
 		// и показать их рядом значило бы предложить два правильных ответа.
-		key := lexicon.Normalize(distractor.Text, course.TranslationLang)
+		key := lexicon.Normalize(candidate, item.AnswerLang)
 		if key == "" || seen[key] {
 			continue
 		}
 		seen[key] = true
-		options = append(options, distractor.Text)
+		options = append(options, candidate)
 	}
 
 	if len(options) < MinChoiceOptions {
@@ -313,6 +363,15 @@ func (s *Service) options(ctx context.Context, course *study.Course, item *Item)
 		})
 	}
 	return options, correctIndex, nil
+}
+
+// texts вытаскивает тексты переводов.
+func texts(translations []lexicon.Translation) []string {
+	out := make([]string, 0, len(translations))
+	for i := range translations {
+		out = append(out, translations[i].Text)
+	}
+	return out
 }
 
 // PickMode выбирает режим проверки для карточки.

@@ -42,6 +42,7 @@ type Settings struct {
 	// Timezone — таймзона пользователя, задающая границу суток.
 	Timezone Timezone
 	// ReverseDirection меняет направление проверки на «перевод → слово».
+	// Что это значит для режимов — в study.Direction.
 	ReverseDirection bool
 	// QuizModes — включённые режимы проверки. Пустым быть не может: иначе
 	// карточку нечем показать. Хранится в каноничном порядке без повторов.
@@ -158,6 +159,14 @@ func (s Settings) WithReminderAt(at TimeOfDay) (Settings, error) {
 		return Settings{}, err
 	}
 	return s, nil
+}
+
+// Direction — в какую сторону спрашивать карточки.
+func (s Settings) Direction() study.Direction {
+	if s.ReverseDirection {
+		return study.DirectionProduce
+	}
+	return study.DirectionRecognize
 }
 
 // RemindersEnabled сообщает, что пользователь просил напоминать.

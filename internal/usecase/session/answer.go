@@ -95,17 +95,20 @@ func (s *Service) Submit(ctx context.Context, answer Answer) (Outcome, error) {
 		return Outcome{}, fmt.Errorf("прочитать настройки: %w", err)
 	}
 
-	translations, err := s.deps.Lexemes.Translations(ctx, []lexicon.LexemeID{card.LexemeID}, course.TranslationLang)
+	// Карточка собирается заново тем же способом, что и при показе: ответ
+	// проверяется против того, что человеку показали, а не против того,
+	// что мы считаем правильным сегодня.
+	item, err := s.card(ctx, &course, &settings, &card)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("получить переводы: %w", err)
-	}
-	accepted := lexicon.AcceptedAnswers(translations[card.LexemeID])
-	if len(accepted) == 0 {
-		return Outcome{}, fmt.Errorf("у слова %d нет переводов на %s: %w",
-			card.LexemeID, course.TranslationLang, port.ErrNotFound)
+		return Outcome{}, err
 	}
 
-	graded, err := s.grade(answer, accepted, course.TranslationLang)
+	accepted := item.Answer
+	if len(accepted) == 0 {
+		return Outcome{}, fmt.Errorf("у карточки %d нет верного ответа: %w", card.ID, port.ErrNotFound)
+	}
+
+	graded, err := s.grade(answer, accepted, item.AnswerLang)
 	if err != nil {
 		return Outcome{}, err
 	}

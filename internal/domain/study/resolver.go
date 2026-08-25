@@ -16,9 +16,6 @@ const DefaultFastAnswer = 3 * time.Second
 // именно считать ответом, зависит от режима.
 type Answer struct {
 	Mode Mode
-	// SelfRating — оценка, которую пользователь выбрал сам. Только для recall:
-	// там он единственный, кто знает, вспомнил ли слово.
-	SelfRating Rating
 	// Match — насколько введённый текст совпал с допустимыми переводами.
 	// Только для typing; расстояние Левенштейна уже учтено в степени
 	// совпадения (см. lexicon.CheckAnswer).
@@ -34,8 +31,6 @@ type Answer struct {
 // и в статистику, и считается он по-разному в каждом режиме.
 func (a Answer) IsCorrect() bool {
 	switch a.Mode {
-	case ModeRecall:
-		return a.SelfRating.IsValid() && !a.SelfRating.Failed()
 	case ModeChoice:
 		return a.Correct
 	case ModeTyping:
@@ -48,10 +43,10 @@ func (a Answer) IsCorrect() bool {
 // RatingResolver превращает ответ в оценку для планировщика.
 //
 // Смысл этого слоя в том, что SM-2 понимает только четыре оценки, а режимы
-// проверки дают разные свидетельства: в recall человек оценивает себя сам,
-// в choice мы знаем правильность и скорость, в typing — насколько текст
-// разошёлся с переводом. Таблица отображения одна на всё приложение и живёт
-// здесь, а не растекается по хендлерам.
+// проверки дают разные свидетельства: в choice мы знаем правильность
+// и скорость, в typing — насколько текст разошёлся с переводом. Таблица
+// отображения одна на всё приложение и живёт здесь, а не растекается
+// по хендлерам.
 type RatingResolver struct {
 	fastAnswer time.Duration
 }
@@ -71,13 +66,12 @@ func DefaultRatingResolver() RatingResolver {
 
 // Resolve отображает ответ в оценку по таблице из плана (§5):
 //
-//	recall  — оценка пользователя как есть;
 //	choice  — верно → good, верно и быстро → easy, неверно → again;
 //	typing  — точное совпадение → good, после нормализации или опечатка → hard,
 //	          иначе → again.
 //
-// Ошибка означает, что хендлер собрал ответ неправильно: не указал режим или
-// не передал оценку там, где её должен был выбрать пользователь.
+// Ошибка означает, что хендлер собрал ответ неправильно — например,
+// не указал режим.
 func (r RatingResolver) Resolve(a Answer) (Rating, error) {
 	fast := r.fastAnswer
 	if fast <= 0 {
@@ -87,12 +81,6 @@ func (r RatingResolver) Resolve(a Answer) (Rating, error) {
 	}
 
 	switch a.Mode {
-	case ModeRecall:
-		if !a.SelfRating.IsValid() {
-			return 0, fmt.Errorf("rating: %w (в режиме %s оценку выбирает пользователь)", ErrRequired, ModeRecall)
-		}
-		return a.SelfRating, nil
-
 	case ModeChoice:
 		if !a.Correct {
 			return RatingAgain, nil

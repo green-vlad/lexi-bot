@@ -112,10 +112,10 @@ func TestReviewAnswerOnlyInTyping(t *testing.T) {
 	}
 
 	p = reviewParams()
-	p.Mode = study.ModeRecall
+	p.Mode = study.ModeChoice
 	p.AnswerRaw = "дом"
 	if _, err := study.NewReview(p); !errors.Is(err, study.ErrInvalid) {
-		t.Error("текст ответа в режиме recall должен быть отклонён")
+		t.Error("текст ответа в режиме choice должен быть отклонён")
 	}
 }
 

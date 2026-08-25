@@ -497,53 +497,39 @@ func TestPickMode(t *testing.T) {
 
 	all := study.Modes()
 
-	// У нового слова отпадает только ввод текстом: напечатать перевод
-	// незнакомого слова невозможно. Выбор из четырёх, наоборот, — нормальный
-	// способ познакомиться со словом.
 	newCard := study.Card{ID: 7, CardState: study.CardState{State: study.StateNew}}
-	if got := session.PickMode(all, &newCard); got == study.ModeTyping {
-		t.Error("новое слово нельзя спрашивать вводом текста")
-	}
-
-	// Выученная карточка чередует режимы, но детерминированно: одно и то же
-	// состояние всегда даёт один и тот же режим.
 	card := study.Card{
 		ID:             7,
 		CardState:      study.CardState{State: study.StateReview, Repetitions: 2},
 		LastReviewedAt: time.Now(),
 	}
-	first := session.PickMode(all, &card)
-	if second := session.PickMode(all, &card); first != second {
-		t.Errorf("режим меняется между вызовами: %v и %v", first, second)
+
+	// Выбор из вариантов — основной способ спросить слово, и режимы больше
+	// не чередуются: печатать или выбирать, решает сам человек кнопкой
+	// «напишу сам».
+	for _, tt := range []struct {
+		name string
+		card *study.Card
+	}{{"новое слово", &newCard}, {"знакомое слово", &card}} {
+		if got := session.PickMode(all, tt.card); got != study.ModeChoice {
+			t.Errorf("%s: режим = %v, ожидался выбор из вариантов", tt.name, got)
+		}
 	}
 
-	// Следующее повторение той же карточки даёт другой режим — иначе
-	// чередования не было бы вовсе.
-	card.Repetitions++
-	if next := session.PickMode(all, &card); next == first {
-		t.Errorf("после повторения режим остался %v", next)
-	}
-
-	// Из включённых режимов выбирается только включённый.
+	// Ввод текстом назначается сам, только если выбор из вариантов выключен.
 	only := []study.Mode{study.ModeTyping}
 	if got := session.PickMode(only, &card); got != study.ModeTyping {
 		t.Errorf("режим = %v, ожидался единственный включённый", got)
 	}
-	// А если единственный включённый режим новому слову не годится,
-	// оно спрашивается узнаванием — лучше так, чем провалить его сразу.
-	if got := session.PickMode(only, &newCard); got != study.ModeRecall {
-		t.Errorf("новое слово при единственном режиме = %v, ожидалось recall", got)
-	}
-
-	// Выбор из четырёх новому слову годится.
-	choiceOnly := []study.Mode{study.ModeChoice}
-	if got := session.PickMode(choiceOnly, &newCard); got != study.ModeChoice {
-		t.Errorf("новое слово = %v, ожидался выбор из вариантов", got)
+	// А новому слову он не годится и тогда: напечатать перевод слова,
+	// которое видишь впервые, нельзя — это гарантированный провал.
+	if got := session.PickMode(only, &newCard); got != study.ModeChoice {
+		t.Errorf("новое слово при единственном режиме = %v, ожидался выбор", got)
 	}
 
 	// Пустой набор — это ошибка настроек, но сессия из-за неё не встаёт.
-	if got := session.PickMode(nil, &card); got != study.ModeRecall {
-		t.Errorf("без включённых режимов = %v, ожидалось recall", got)
+	if got := session.PickMode(nil, &card); got != study.ModeChoice {
+		t.Errorf("без включённых режимов = %v, ожидался выбор", got)
 	}
 }
 
@@ -700,7 +686,7 @@ func TestOptionsSkipDuplicatesOfCorrectAnswer(t *testing.T) {
 	}
 }
 
-func TestOptionsFallBackToRecall(t *testing.T) {
+func TestOptionsFallBackToTyping(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, 5)
@@ -711,11 +697,17 @@ func TestOptionsFallBackToRecall(t *testing.T) {
 	}
 
 	item, _ := f.next(t)
-	if item.Mode != study.ModeRecall {
-		t.Errorf("режим = %v, ожидался откат к узнаванию", item.Mode)
+	// Выбор из двух — подбрасывание монетки, а не проверка. Остаётся ввод
+	// текстом, даже в сторону родного языка: там засчитывается любое
+	// из значений слова.
+	if item.Mode != study.ModeTyping {
+		t.Errorf("режим = %v, ожидался откат к вводу текстом", item.Mode)
 	}
 	if len(item.Options) != 0 {
 		t.Errorf("варианты = %v, при откате их быть не должно", item.Options)
+	}
+	if item.OfferTyping {
+		t.Error("кнопка «напишу сам» на экране без вариантов не нужна")
 	}
 }
 
@@ -812,7 +804,6 @@ func TestDirectionChangesQuestionAndAnswer(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, 3)
-	f.settings.settings.QuizModes = []study.Mode{study.ModeRecall}
 
 	// По умолчанию спрашиваем на узнавание: показываем слово, ждём перевод.
 	item, _ := f.next(t)
@@ -846,38 +837,47 @@ func TestDirectionChangesQuestionAndAnswer(t *testing.T) {
 	}
 }
 
-func TestTypingOnlyTowardsStudiedLanguage(t *testing.T) {
+func TestTypingOfferedOnlyTowardsStudiedLanguage(t *testing.T) {
 	t.Parallel()
 
-	f := newFixture(t, 3)
-	f.settings.settings.QuizModes = []study.Mode{study.ModeTyping}
+	f := newFixture(t, 5)
+	f.decks.distractors = []lexicon.Translation{
+		{LexemeID: 2, Lang: langRU, Text: "собака", IsPrimary: true},
+		{LexemeID: 3, Lang: langRU, Text: "вода", IsPrimary: true},
+		{LexemeID: 4, Lang: langRU, Text: "огонь", IsPrimary: true},
+	}
+	f.decks.terms = []lexicon.Lexeme{
+		{ID: 2, Lang: langKO, Term: "개", POS: lexicon.POSNoun},
+		{ID: 3, Lang: langKO, Term: "물", POS: lexicon.POSNoun},
+		{ID: 4, Lang: langKO, Term: "불", POS: lexicon.POSNoun},
+	}
 
 	// Печатать перевод на родной язык бессмысленно: у слова несколько
 	// равноправных значений, и свободный ввод превращается в угадывание
-	// того, какое из них мы сочли основным.
+	// того, какое из них мы сочли основным. Кнопки «напишу сам» здесь нет.
 	item, _ := f.next(t)
-	if item.Mode == study.ModeTyping {
-		t.Error("ввод текстом не должен предлагаться в сторону родного языка")
+	if item.Mode != study.ModeChoice {
+		t.Fatalf("режим = %v, ожидался выбор из вариантов", item.Mode)
+	}
+	if item.OfferTyping {
+		t.Error("в сторону родного языка печатать ответ не предлагаем")
 	}
 
+	// В обратную сторону слово одно, и напечатать его — настоящая проверка.
 	f.settings.settings.ReverseDirection = true
 	item, _ = f.next(t)
-	// Слово всё ещё новое: даже в обратную сторону печатать незнакомое
-	// слово невозможно, поэтому спрашиваем узнаванием.
-	if item.Mode != study.ModeRecall {
-		t.Errorf("режим = %v, ожидалось узнавание для нового слова", item.Mode)
+	if item.Mode != study.ModeChoice {
+		t.Fatalf("режим = %v, ожидался выбор из вариантов", item.Mode)
+	}
+	if !item.OfferTyping {
+		t.Error("в сторону изучаемого языка нужна кнопка «напишу сам»")
 	}
 
-	// А у слова, которое человек уже видел, ввод текстом появляется.
-	for i := range f.cards.cards {
-		f.cards.cards[i].State = study.StateReview
-		f.cards.cards[i].Repetitions = 2
-		f.cards.cards[i].LastReviewedAt = f.now.Add(-time.Hour)
-		f.cards.cards[i].DueAt = f.now.Add(-time.Minute)
-	}
+	// Выключенный в настройках ввод текстом кнопку не показывает.
+	f.settings.settings.QuizModes = []study.Mode{study.ModeChoice}
 	item, _ = f.next(t)
-	if item.Mode != study.ModeTyping {
-		t.Errorf("режим = %v, ожидался ввод текстом", item.Mode)
+	if item.OfferTyping {
+		t.Error("ввод текстом выключен в настройках, а кнопка осталась")
 	}
 }
 

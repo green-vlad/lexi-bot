@@ -19,9 +19,8 @@ import (
 // Действия кнопок учебной сессии.
 const (
 	actionNext   = "next"
-	actionShow   = "show"
-	actionRate   = "rate"
 	actionAnswer = "ans"
+	actionType   = "type"
 )
 
 // stateTyping — шаг диалога, на котором бот ждёт напечатанный перевод.
@@ -42,9 +41,9 @@ type typingState struct {
 
 // Learn — команда /learn и режимы проверки.
 //
-// Карточка живёт в одном сообщении, которое правится на месте: слово →
-// перевод с кнопками оценки → следующая карточка. Занятие из тридцати
-// карточек иначе превращалось бы в сотню сообщений в чате.
+// Карточка живёт в одном сообщении, которое правится на месте: слово
+// с вариантами перевода → разбор ответа → следующая карточка. Занятие
+// из тридцати карточек иначе превращалось бы в сотню сообщений в чате.
 type Learn struct {
 	session   *session.Service
 	courses   *courses.Service
@@ -83,9 +82,8 @@ func NewLearn(service *session.Service, courseService *courses.Service, messenge
 func (l *Learn) Register(router *Router) {
 	router.Command("learn", port.UpdateHandlerFunc(l.start))
 	router.CallbackAction(actionNext, port.UpdateHandlerFunc(l.next))
-	router.CallbackAction(actionShow, port.UpdateHandlerFunc(l.show))
-	router.CallbackAction(actionRate, port.UpdateHandlerFunc(l.rate))
 	router.CallbackAction(actionAnswer, port.UpdateHandlerFunc(l.answer))
+	router.CallbackAction(actionType, port.UpdateHandlerFunc(l.chooseTyping))
 }
 
 // answer принимает выбранный вариант.
@@ -227,6 +225,10 @@ func (l *Learn) continueOutsideDialog(ctx context.Context, u *port.Update, cours
 
 // showCard рисует вопрос.
 func (l *Learn) showCard(ctx context.Context, u *port.Update, messageID port.MessageID, item *session.Item) (*typingState, error) {
+	if item.Mode == study.ModeTyping {
+		return l.askTyping(ctx, u, messageID, item)
+	}
+
 	localizer, err := l.localizer(ctx)
 	if err != nil {
 		return nil, err
@@ -236,26 +238,35 @@ func (l *Learn) showCard(ctx context.Context, u *port.Update, messageID port.Mes
 	if err != nil {
 		return nil, err
 	}
-	switch item.Mode {
-	case study.ModeChoice:
-		text += "\n\n" + mustText(localizer, "learn.choose_translation")
-	case study.ModeTyping:
-		text += "\n\n" + mustText(localizer, "learn.type_prompt")
-	}
+	text += "\n\n" + mustText(localizer, "learn.choose_translation")
 
 	shownAt := l.clock.Now()
 
-	keyboard, err := l.questionKeyboard(localizer, item, shownAt)
+	keyboard, err := l.choiceKeyboard(localizer, item, shownAt)
+	if err != nil {
+		return nil, err
+	}
+	return nil, l.render(ctx, u, messageID, text, keyboard)
+}
+
+// askTyping спрашивает то же слово вводом текста.
+//
+// Кнопок здесь нет, зато бот переходит в ожидание ответа: иначе он
+// не отличил бы перевод от случайного сообщения в чат.
+func (l *Learn) askTyping(ctx context.Context, u *port.Update, messageID port.MessageID, item *session.Item) (*typingState, error) {
+	localizer, err := l.localizer(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if item.Mode != study.ModeTyping {
-		return nil, l.render(ctx, u, messageID, text, keyboard)
+	text, err := cardText(localizer, item)
+	if err != nil {
+		return nil, err
 	}
+	text += "\n\n" + mustText(localizer, "learn.type_prompt")
 
-	// В режиме ввода кнопок нет, зато бот переходит в ожидание ответа:
-	// иначе он не отличил бы перевод от случайного сообщения в чат.
+	shownAt := l.clock.Now()
+
 	sent, err := l.renderAndReturn(ctx, u, messageID, text, nil)
 	if err != nil {
 		return nil, err
@@ -266,6 +277,35 @@ func (l *Learn) showCard(ctx context.Context, u *port.Update, messageID port.Mes
 		ShownAt:   shownAt.Unix(),
 		MessageID: int(sent),
 	}, nil
+}
+
+// chooseTyping принимает нажатие «напишу сам»: та же карточка спрашивается
+// заново, но уже без вариантов.
+//
+// Момент показа отсчитывается с этого нажатия, а не с появления вариантов:
+// время, потраченное на решение отвечать самому, к припоминанию слова
+// отношения не имеет.
+func (l *Learn) chooseTyping(ctx context.Context, u *port.Update) error {
+	callback, ok := decodeCallback(u.Callback.Data)
+	if !ok {
+		return nil
+	}
+
+	item, err := l.session.Card(ctx, study.CardID(callback.ID))
+	if err != nil {
+		return err
+	}
+	// Токен из кнопки сверяется с карточкой: на неё могли уже ответить
+	// с другого устройства.
+	if callback.Param != session.Attempt(&item.Card) {
+		return l.stale(ctx, u)
+	}
+
+	waiting, err := l.askTyping(ctx, u, u.Callback.MessageID, &item)
+	if err != nil {
+		return err
+	}
+	return l.dialogs.Start(ctx, stateTyping, *waiting)
 }
 
 // typed принимает напечатанный перевод.
@@ -370,25 +410,14 @@ func (l *Learn) explainTyped(ctx context.Context, u *port.Update, state *typingS
 	return l.render(ctx, u, port.MessageID(state.MessageID), text, keyboard)
 }
 
-// questionKeyboard собирает кнопки вопроса под режим проверки.
-// Ввод текстом добавится в T-033.
-func (l *Learn) questionKeyboard(localizer port.Localizer, item *session.Item, shownAt time.Time) (*port.Keyboard, error) {
-	if item.Mode == study.ModeChoice {
-		return l.choiceKeyboard(item, shownAt)
-	}
-	return NewKeyboard().Row(Button(
-		mustText(localizer, "learn.show_translation"),
-		Callback{Action: actionShow, ID: int64(item.Card.ID), Param: session.Attempt(&item.Card)},
-	)).Build()
-}
-
-// choiceKeyboard собирает варианты ответа.
+// choiceKeyboard собирает варианты ответа и, если ввод текстом уместен,
+// кнопку «напишу сам».
 //
-// В кнопке едет признак правильности, а не номер варианта: сами варианты
+// В кнопке варианта едет признак правильности, а не номер: сами варианты
 // нигде не хранятся, и восстановить по номеру, что было под ним, к моменту
 // нажатия невозможно. Подделать кнопку теоретически можно, но обманет этим
 // человек только себя — оценка ставится его же карточке.
-func (l *Learn) choiceKeyboard(item *session.Item, shownAt time.Time) (*port.Keyboard, error) {
+func (l *Learn) choiceKeyboard(localizer port.Localizer, item *session.Item, shownAt time.Time) (*port.Keyboard, error) {
 	attempt := session.Attempt(&item.Card)
 
 	buttons := make([]KeyboardButton, 0, len(item.Options))
@@ -405,96 +434,17 @@ func (l *Learn) choiceKeyboard(item *session.Item, shownAt time.Time) (*port.Key
 			Param: correct + ":" + attempt + ":" + encodeTime(shownAt),
 		}))
 	}
-	return NewKeyboard().Grid(2, buttons...).Build()
-}
 
-// show открывает перевод и предлагает оценить себя.
-func (l *Learn) show(ctx context.Context, u *port.Update) error {
-	callback, ok := decodeCallback(u.Callback.Data)
-	if !ok {
-		return nil
-	}
-
-	item, err := l.session.Card(ctx, study.CardID(callback.ID))
-	if err != nil {
-		return err
-	}
-	// Токен из кнопки сверяется с карточкой: если на неё уже ответили,
-	// показывать перевод и предлагать оценку поздно.
-	if callback.Param != session.Attempt(&item.Card) {
-		return l.stale(ctx, u)
-	}
-
-	localizer, err := l.localizer(ctx)
-	if err != nil {
-		return err
-	}
-
-	// В самооценке показываем обе стороны: и то, что спрашивали,
-	// и то, что человек должен был вспомнить.
-	text, err := localizer.T("learn.revealed", port.Args{
-		"Term":        item.Question,
-		"Translation": strings.Join(item.Answer, ", "),
-	})
-	if err != nil {
-		return err
-	}
-
-	keyboard, err := l.ratingKeyboard(localizer, &item)
-	if err != nil {
-		return err
-	}
-	return l.render(ctx, u, u.Callback.MessageID, text, keyboard)
-}
-
-// ratingKeyboard собирает кнопки самооценки — те самые четыре оценки SM-2.
-func (l *Learn) ratingKeyboard(localizer port.Localizer, item *session.Item) (*port.Keyboard, error) {
-	attempt := session.Attempt(&item.Card)
-
-	buttons := make([]KeyboardButton, 0, len(study.Ratings()))
-	for _, rating := range study.Ratings() {
-		buttons = append(buttons, Button(
-			mustText(localizer, "learn.rate_"+rating.String()),
-			Callback{
-				Action: actionRate,
-				ID:     int64(item.Card.ID),
-				// Оценка и токен попытки вместе: разбор идёт на три части,
-				// поэтому двоеточие внутри параметра допустимо.
-				Param: rating.String() + ":" + attempt,
-			},
+	keyboard := NewKeyboard().Grid(2, buttons...)
+	if item.OfferTyping {
+		// Отдельной строкой под вариантами: это не пятый вариант ответа,
+		// а другой способ отвечать, и путать их нельзя.
+		keyboard = keyboard.Row(Button(
+			mustText(localizer, "learn.type_myself"),
+			Callback{Action: actionType, ID: int64(item.Card.ID), Param: attempt},
 		))
 	}
-	return NewKeyboard().Grid(2, buttons...).Build()
-}
-
-// rate принимает самооценку и переходит к следующей карточке.
-func (l *Learn) rate(ctx context.Context, u *port.Update) error {
-	callback, ok := decodeCallback(u.Callback.Data)
-	if !ok {
-		return nil
-	}
-
-	name, attempt, _ := strings.Cut(callback.Param, ":")
-	rating, valid := parseRating(name)
-	if !valid {
-		// Кнопка от прошлой версии бота: молча ничего не делаем.
-		return nil
-	}
-
-	outcome, err := l.session.Submit(ctx, session.Answer{
-		CardID:     study.CardID(callback.ID),
-		Attempt:    attempt,
-		Mode:       study.ModeRecall,
-		SelfRating: rating,
-	})
-	if err != nil {
-		return err
-	}
-	if outcome.Duplicate {
-		return l.stale(ctx, u)
-	}
-
-	return l.continueOutsideDialog(ctx, u, outcome.CourseID, u.Callback.MessageID)
+	return keyboard.Build()
 }
 
 // finish сообщает, что карточек больше нет, и показывает итог занятия.
@@ -671,11 +621,4 @@ func decodeTime(encoded string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return time.Unix(seconds, 0), true
-}
-
-// parseRating превращает разбор оценки в ответ «да или нет»: хендлеру
-// не нужна причина, по которой кнопка не годится.
-func parseRating(name string) (study.Rating, bool) {
-	rating, err := study.ParseRating(name)
-	return rating, err == nil
 }

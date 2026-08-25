@@ -70,7 +70,7 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	}
 	f.cards = newStubCards(pool, course.ID)
 	f.lexemes = &stubLexemes{lexemes: lexemes, translations: translations}
-	f.decks = &stubDeckSource{translations: translations}
+	f.decks = &stubDeckSource{lexemes: lexemes, translations: translations}
 	f.reviews = &stubReviews{}
 	// Порядок вариантов фиксирован: тест должен знать, где правильный.
 	f.rand = &stubRand{}
@@ -214,79 +214,15 @@ func (f *learnFixture) screen(t *testing.T) (text string, buttons []string) {
 	return last.Text, buttons
 }
 
-func TestLearnShowsCardAndAcceptsRating(t *testing.T) {
-	t.Parallel()
-
-	f := newLearnFixture(t, 2, study.ModeRecall)
-
-	f.send(t, "/learn")
-
-	text, buttons := f.screen(t)
-	if !strings.Contains(text, "집") {
-		t.Errorf("на карточке %q, ожидалось слово", text)
-	}
-	if !strings.Contains(text, "чтение") {
-		t.Errorf("на карточке %q, ожидалось чтение слова", text)
-	}
-	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "show:") {
-		t.Fatalf("кнопки = %v, ожидалась одна кнопка показа перевода", buttons)
-	}
-
-	// Перевод открывается по кнопке, а не сразу: в этом весь смысл режима.
-	f.press(t, buttons[0])
-	text, buttons = f.screen(t)
-	if !strings.Contains(text, "дом") {
-		t.Errorf("после показа %q, ожидался перевод", text)
-	}
-	if len(buttons) != len(study.Ratings()) {
-		t.Fatalf("кнопок оценки %d, ожидалось четыре: %v", len(buttons), buttons)
-	}
-
-	// Оценка двигает карточку и показывает следующее слово.
-	var good string
-	for _, data := range buttons {
-		if strings.Contains(data, ":good:") {
-			good = data
-		}
-	}
-	if good == "" {
-		t.Fatalf("среди кнопок нет оценки good: %v", buttons)
-	}
-
-	f.press(t, good)
-	text, buttons = f.screen(t)
-	if !strings.Contains(text, "개") {
-		t.Errorf("после ответа %q, ожидалось следующее слово", text)
-	}
-	if len(buttons) != 1 {
-		t.Errorf("кнопки следующей карточки = %v", buttons)
-	}
-
-	// Карточка действительно уехала: состояние изменилось.
-	card, err := f.cards.ByID(context.Background(), 1)
-	if err != nil {
-		t.Fatalf("ByID() вернул ошибку: %v", err)
-	}
-	if card.State == study.StateNew || card.IsNew() {
-		t.Errorf("карточка осталась новой: %+v", card.CardState)
-	}
-}
-
 func TestLearnFinishesWhenNothingLeft(t *testing.T) {
 	t.Parallel()
 
-	f := newLearnFixture(t, 1, study.ModeRecall)
+	// Одно слово в колоде: ложных вариантов взять негде, и слово
+	// спрашивается вводом текста.
+	f := newLearnFixture(t, 1)
 
 	f.send(t, "/learn")
-	_, buttons := f.screen(t)
-	f.press(t, buttons[0])
-
-	_, buttons = f.screen(t)
-	for _, data := range buttons {
-		if strings.Contains(data, ":good:") {
-			f.press(t, data)
-		}
-	}
+	f.send(t, "дом")
 
 	// Слов больше нет: занятие закончилось, кнопок не осталось.
 	text, buttons := f.screen(t)
@@ -301,7 +237,7 @@ func TestLearnFinishesWhenNothingLeft(t *testing.T) {
 func TestLearnWithoutCourse(t *testing.T) {
 	t.Parallel()
 
-	f := newLearnFixture(t, 2, study.ModeRecall)
+	f := newLearnFixture(t, 2)
 	f.courses.byID = map[study.CourseID]study.Course{}
 
 	f.send(t, "/learn")
@@ -315,7 +251,7 @@ func TestLearnWithoutCourse(t *testing.T) {
 func TestLearnSkipsPausedCourse(t *testing.T) {
 	t.Parallel()
 
-	f := newLearnFixture(t, 2, study.ModeRecall)
+	f := newLearnFixture(t, 2)
 	for id, course := range f.courses.byID {
 		course.Status = study.CoursePaused
 		f.courses.byID[id] = course
@@ -332,36 +268,29 @@ func TestLearnSkipsPausedCourse(t *testing.T) {
 func TestLearnIgnoresStaleButtons(t *testing.T) {
 	t.Parallel()
 
-	f := newLearnFixture(t, 2, study.ModeRecall)
+	f := newLearnFixture(t, 4)
 
 	f.send(t, "/learn")
 	_, buttons := f.screen(t)
-	show := buttons[0]
 
-	f.press(t, show)
-	_, rating := f.screen(t)
-
-	var good string
-	for _, data := range rating {
-		if strings.Contains(data, ":good:") {
-			good = data
+	var correct string
+	for _, data := range buttons {
+		if strings.HasPrefix(data, "ans:1:1:") {
+			correct = data
 		}
 	}
-	f.press(t, good)
+	if correct == "" {
+		t.Fatalf("среди вариантов нет правильного: %v", buttons)
+	}
 
-	// Второе нажатие той же кнопки оценки: карточка уже уехала, и токен
-	// в кнопке устарел.
-	f.press(t, good)
+	f.press(t, correct)
+
+	// Второе нажатие той же кнопки: карточка уже уехала, и токен в кнопке
+	// устарел.
+	f.press(t, correct)
 	text, _ := f.screen(t)
 	if !strings.Contains(text, "уже отвечена") {
 		t.Errorf("ответ на устаревшую кнопку = %q", text)
-	}
-
-	// Как и кнопка показа перевода от той же карточки.
-	f.press(t, show)
-	text, _ = f.screen(t)
-	if !strings.Contains(text, "уже отвечена") {
-		t.Errorf("ответ на устаревшую кнопку показа = %q", text)
 	}
 }
 
@@ -455,15 +384,18 @@ func TestLearnChoiceExplainsMiss(t *testing.T) {
 func TestLearnChoiceFallsBackWhenDeckIsTiny(t *testing.T) {
 	t.Parallel()
 
-	// В колоде одно слово: ложных вариантов взять негде, и выбор из одной
-	// кнопки был бы издевательством. Спрашиваем узнаванием.
+	// В колоде одно слово: ложных вариантов взять негде, а выбор из одной
+	// кнопки был бы издевательством. Остаётся ввод текстом.
 	f := newLearnFixture(t, 1, study.ModeChoice)
 
 	f.send(t, "/learn")
 
-	_, buttons := f.screen(t)
-	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "show:") {
-		t.Fatalf("кнопки = %v, ожидался переход к показу перевода", buttons)
+	text, buttons := f.screen(t)
+	if len(buttons) != 0 {
+		t.Fatalf("кнопки = %v, ожидался переход к вводу текстом", buttons)
+	}
+	if !strings.Contains(text, "Напечатайте перевод") {
+		t.Errorf("экран = %q, ожидалось приглашение напечатать перевод", text)
 	}
 }
 
@@ -494,6 +426,67 @@ func TestLearnChoiceCountsSpeed(t *testing.T) {
 	// «хорошо» оставляет на шагах обучения.
 	if card.State != study.StateLearning {
 		t.Errorf("состояние = %v, ожидалось обучение: ответ не был быстрым", card.State)
+	}
+}
+
+func TestLearnOffersTypingBesideOptions(t *testing.T) {
+	t.Parallel()
+
+	// Спрашиваем в сторону изучаемого языка: там напечатать ответ можно,
+	// и кнопка «напишу сам» стоит рядом с вариантами.
+	f := newLearnFixture(t, 4)
+	f.reverse(t)
+
+	f.send(t, "/learn")
+	text, buttons := f.screen(t)
+	if !strings.Contains(text, "дом") {
+		t.Errorf("на карточке %q, ожидался перевод", text)
+	}
+	if len(buttons) != 5 {
+		t.Fatalf("кнопок %d, ожидались четыре варианта и «напишу сам»: %v", len(buttons), buttons)
+	}
+
+	typeMyself := buttons[len(buttons)-1]
+	if !strings.HasPrefix(typeMyself, "type:") {
+		t.Fatalf("последняя кнопка = %q, ожидался переход к вводу текстом", typeMyself)
+	}
+
+	// Нажатие убирает варианты и переводит бота в ожидание ответа.
+	f.press(t, typeMyself)
+	text, buttons = f.screen(t)
+	if len(buttons) != 0 {
+		t.Errorf("после «напишу сам» остались кнопки: %v", buttons)
+	}
+	if !strings.Contains(text, "дом") {
+		t.Errorf("экран ввода = %q, ожидался тот же вопрос", text)
+	}
+	if dialog, ok := f.sessions.current(t); !ok || dialog.State != "learn:typing" {
+		t.Fatalf("состояние диалога = %+v, ожидалось ожидание ввода", dialog)
+	}
+
+	// И напечатанный ответ засчитывается так же, как в обычном вводе.
+	f.send(t, "집")
+	if got := f.messenger.edits[len(f.messenger.edits)-1].Text; !strings.Contains(got, "Верно") {
+		t.Errorf("разбор = %q, ожидалось подтверждение", got)
+	}
+}
+
+func TestLearnHidesTypingTowardsNativeLanguage(t *testing.T) {
+	t.Parallel()
+
+	// Обратная сторона: ответ — перевод на родной язык, у которого обычно
+	// несколько равноправных значений. Печатать его мы не предлагаем.
+	f := newLearnFixture(t, 4)
+
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+	if len(buttons) != 4 {
+		t.Fatalf("кнопок %d, ожидались только четыре варианта: %v", len(buttons), buttons)
+	}
+	for _, data := range buttons {
+		if strings.HasPrefix(data, "type:") {
+			t.Errorf("кнопка «напишу сам» показана там, где печатать нечего: %v", buttons)
+		}
 	}
 }
 
@@ -668,25 +661,22 @@ func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
 func TestLearnShowsSummary(t *testing.T) {
 	t.Parallel()
 
-	f := newLearnFixture(t, 2, study.ModeRecall)
+	// Два слова: вариантов из такой колоды не набрать, и обе карточки
+	// спрашиваются вводом текста.
+	f := newLearnFixture(t, 2)
 	f.reviews.total, f.reviews.correct = 2, 1
 
-	// Проходим обе карточки: одну верно, одну нет.
-	for i, rating := range []string{"good", "again"} {
-		f.send(t, "/learn")
-		_, buttons := f.screen(t)
-		if len(buttons) == 0 {
-			t.Fatalf("карточка %d: кнопок нет", i+1)
-		}
-		f.press(t, buttons[0])
+	f.send(t, "/learn")
+	// Верный ответ ведёт к следующему слову сам.
+	f.send(t, "дом")
+	// А промах ждёт нажатия «дальше».
+	f.send(t, "мимо")
 
-		_, ratings := f.screen(t)
-		for _, data := range ratings {
-			if strings.Contains(data, ":"+rating+":") {
-				f.press(t, data)
-			}
-		}
+	_, buttons := f.screen(t)
+	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "next:") {
+		t.Fatalf("кнопки разбора = %v, ожидалась одна кнопка «дальше»", buttons)
 	}
+	f.press(t, buttons[0])
 
 	// Слова кончились — показан итог.
 	text, buttons := f.screen(t)
@@ -710,19 +700,12 @@ func TestLearnShowsSummary(t *testing.T) {
 func TestLearnSummaryWithoutAnswers(t *testing.T) {
 	t.Parallel()
 
-	f := newLearnFixture(t, 1, study.ModeRecall)
+	f := newLearnFixture(t, 1)
 
 	// Отвечаем на единственную карточку, чтобы дневной лимит кончился
 	// не сразу, а колода — да.
 	f.send(t, "/learn")
-	_, buttons := f.screen(t)
-	f.press(t, buttons[0])
-	_, ratings := f.screen(t)
-	for _, data := range ratings {
-		if strings.Contains(data, ":good:") {
-			f.press(t, data)
-		}
-	}
+	f.send(t, "дом")
 
 	text, _ := f.screen(t)
 	if !strings.Contains(text, "1 карточка") {

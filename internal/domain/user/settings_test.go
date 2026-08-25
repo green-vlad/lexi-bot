@@ -215,11 +215,11 @@ func TestSettingsQuizModes(t *testing.T) {
 	}
 
 	// Набор приводится к каноничному порядку и теряет повторы.
-	updated, err := base.WithQuizModes([]study.Mode{study.ModeTyping, study.ModeRecall, study.ModeTyping})
+	updated, err := base.WithQuizModes([]study.Mode{study.ModeTyping, study.ModeChoice, study.ModeTyping})
 	if err != nil {
 		t.Fatalf("WithQuizModes() вернул ошибку: %v", err)
 	}
-	want := []study.Mode{study.ModeRecall, study.ModeTyping}
+	want := []study.Mode{study.ModeChoice, study.ModeTyping}
 	if len(updated.QuizModes) != len(want) {
 		t.Fatalf("QuizModes = %v, ожидалось %v", updated.QuizModes, want)
 	}
@@ -228,8 +228,13 @@ func TestSettingsQuizModes(t *testing.T) {
 			t.Errorf("QuizModes[%d] = %q, ожидалось %q", i, updated.QuizModes[i], mode)
 		}
 	}
-	if updated.ModeEnabled(study.ModeChoice) {
-		t.Error("режим choice не включался")
+	// Набор из одного режима — тоже допустимая настройка.
+	single, err := base.WithQuizModes([]study.Mode{study.ModeChoice})
+	if err != nil {
+		t.Fatalf("WithQuizModes() вернул ошибку: %v", err)
+	}
+	if single.ModeEnabled(study.ModeTyping) {
+		t.Error("режим typing не включался")
 	}
 }
 
@@ -242,7 +247,7 @@ func TestSettingsQuizModesErrors(t *testing.T) {
 		t.Errorf("пустой набор = %v, ожидалась ошибка ErrRequired", err)
 	}
 	// Неизвестный режим не должен молча выпасть при канонизации.
-	if _, err := base.WithQuizModes([]study.Mode{study.ModeRecall, study.Mode("dictation")}); !errors.Is(err, user.ErrInvalid) {
+	if _, err := base.WithQuizModes([]study.Mode{study.ModeChoice, study.Mode("dictation")}); !errors.Is(err, user.ErrInvalid) {
 		t.Errorf("неизвестный режим = %v, ожидалась ошибка ErrInvalid", err)
 	}
 

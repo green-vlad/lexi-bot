@@ -175,24 +175,10 @@ func TestSubmitChoiceCountsSpeed(t *testing.T) {
 	}
 }
 
-func TestSubmitRecallPassesSelfRating(t *testing.T) {
-	t.Parallel()
-
-	f := newAnswerFixture(t, study.ModeRecall)
-
-	outcome := f.submit(t, session.Answer{Mode: study.ModeRecall, SelfRating: study.RatingHard})
-	if outcome.Rating != study.RatingHard {
-		t.Errorf("оценка = %v, ожидалась выбранная пользователем", outcome.Rating)
-	}
-	if !outcome.Correct {
-		t.Error("«вспомнил с трудом» — это верный ответ")
-	}
-}
-
 func TestSubmitFailureMovesToRelearning(t *testing.T) {
 	t.Parallel()
 
-	f := newAnswerFixture(t, study.ModeRecall)
+	f := newAnswerFixture(t, study.ModeChoice)
 
 	// Доводим карточку до выученного состояния, чтобы провал имел смысл.
 	for i := range f.cards.cards {
@@ -205,7 +191,7 @@ func TestSubmitFailureMovesToRelearning(t *testing.T) {
 		}
 	}
 
-	outcome := f.submit(t, session.Answer{Mode: study.ModeRecall, SelfRating: study.RatingAgain})
+	outcome := f.submit(t, session.Answer{Mode: study.ModeChoice, Correct: false})
 
 	if outcome.Card.State != study.StateRelearning {
 		t.Errorf("фаза = %v, ожидалось переобучение", outcome.Card.State)
@@ -323,17 +309,18 @@ func TestSubmitRejectsUnknownCard(t *testing.T) {
 func TestSubmitRejectsBrokenAnswer(t *testing.T) {
 	t.Parallel()
 
-	f := newAnswerFixture(t, study.ModeRecall)
+	f := newAnswerFixture(t, study.ModeChoice)
 
-	// Режим recall без самооценки: хендлер собрал ответ неправильно.
+	// Ответ без режима: хендлер собрал его неправильно, и превратить
+	// такой ответ в оценку не из чего.
 	_, err := f.service.Submit(context.Background(), session.Answer{
-		CardID: f.card.ID, Attempt: session.Attempt(&f.card), Mode: study.ModeRecall,
+		CardID: f.card.ID, Attempt: session.Attempt(&f.card),
 	})
 	if err == nil {
-		t.Error("ответ без оценки должен быть ошибкой")
+		t.Error("ответ без режима должен быть ошибкой")
 	}
-	if err != nil && !strings.Contains(err.Error(), "оценить") {
-		t.Errorf("ошибка = %v, ожидалось объяснение про оценку", err)
+	if err != nil && !strings.Contains(err.Error(), "mode") {
+		t.Errorf("ошибка = %v, ожидалось объяснение про режим", err)
 	}
 }
 

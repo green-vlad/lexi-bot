@@ -102,6 +102,9 @@ type Item struct {
 	Options []string
 	// Correct — какой из вариантов правильный.
 	Correct int
+	// OfferTyping говорит, что рядом с вариантами уместна кнопка «напишу
+	// сам»: ввод текстом включён и осмыслен в этом направлении.
+	OfferTyping bool
 }
 
 // Reason объясняет, почему карточек нет.
@@ -239,12 +242,13 @@ func (s *Service) prepare(ctx context.Context, course *study.Course, settings *u
 	}
 
 	direction := settings.Direction()
+	enabled := direction.Modes(settings.QuizModes)
 	item := Item{
 		Card:         *card,
 		Lexeme:       lexemes[0],
 		Translations: translations[card.LexemeID],
 		Direction:    direction,
-		Mode:         PickMode(direction.Modes(settings.QuizModes), card),
+		Mode:         PickMode(enabled, card),
 		Correct:      -1,
 	}
 
@@ -268,15 +272,23 @@ func (s *Service) prepare(ctx context.Context, course *study.Course, settings *u
 		}
 		if len(options) < MinChoiceOptions {
 			// Вариантов не набралось: в колоде слишком мало слов
-			// с переводами. Спрашивать выбором из двух, где один вариант
-			// правильный, бессмысленно — показываем перевод по кнопке.
-			item.Mode = study.ModeRecall
+			// с переводами. Выбор из двух, где один вариант правильный, —
+			// не проверка, а подбрасывание монетки, и расписание от таких
+			// ответов поехало бы. Остаётся ввод текстом, даже в сторону
+			// родного языка, где мы его обычно не предлагаем: там
+			// засчитывается любое из значений слова, так что несправедливым
+			// он не будет.
+			item.Mode = study.ModeTyping
 			item.Correct = -1
 		} else {
 			item.Options = options
 			item.Correct = correct
 		}
 	}
+
+	// Ввод текстом остаётся добровольным: кнопка появляется рядом
+	// с вариантами, а не вместо них.
+	item.OfferTyping = item.Mode == study.ModeChoice && containsMode(enabled, study.ModeTyping)
 	return item, ReasonNone, nil
 }
 
@@ -376,39 +388,36 @@ func texts(translations []lexicon.Translation) []string {
 
 // PickMode выбирает режим проверки для карточки.
 //
-// Выбор детерминированный — по идентификатору карточки и числу успешных
-// повторений: одна и та же карточка в одном и том же состоянии всегда
-// спрашивается одинаково, и тест может это проверить. Случайный выбор
-// давал бы то же чередование, но проверить его было бы нечем.
-//
-// У слова, которое человек видит впервые, отпадает только ввод текстом:
-// напечатать перевод незнакомого слова невозможно, и спрашивать так —
-// значит гарантированно засчитать провал. Выбор из четырёх вариантов,
-// наоборот, ровно тем и хорош: это нормальный способ познакомиться
-// со словом, а не проверка того, чего человек ещё не знает.
+// Основной способ спросить слово — выбор из вариантов, и режимы больше
+// не чередуются: чередование решало за человека, каким способом его
+// проверить, а теперь этот выбор отдан ему самому — кнопкой «напишу сам»
+// рядом с вариантами. Сам собой ввод текстом назначается только там, где
+// выбор из вариантов выключен в настройках, да и то не для слова, которое
+// человек видит впервые: напечатать перевод незнакомого слова невозможно,
+// и спрашивать так — значит гарантированно засчитать провал.
 func PickMode(enabled []study.Mode, card *study.Card) study.Mode {
-	usable := enabled
-	if card.State == study.StateNew || card.IsNew() {
-		usable = withoutTyping(enabled)
+	if containsMode(enabled, study.ModeChoice) {
+		return study.ModeChoice
 	}
-	if len(usable) == 0 {
-		return study.ModeRecall
+	if containsMode(enabled, study.ModeTyping) && !isFresh(card) {
+		return study.ModeTyping
 	}
-
-	index := (int64(card.ID) + int64(card.Repetitions)) % int64(len(usable))
-	if index < 0 {
-		index = -index
-	}
-	return usable[index]
+	// Все режимы выключены — настройки этого не допускают, но набор мог
+	// прийти из базы. Выбор из вариантов работает всегда.
+	return study.ModeChoice
 }
 
-// withoutTyping убирает ввод текстом из набора режимов.
-func withoutTyping(modes []study.Mode) []study.Mode {
-	out := make([]study.Mode, 0, len(modes))
+// isFresh сообщает, что слово ещё не показывали.
+func isFresh(card *study.Card) bool {
+	return card.State == study.StateNew || card.IsNew()
+}
+
+// containsMode ищет режим в наборе.
+func containsMode(modes []study.Mode, want study.Mode) bool {
 	for _, mode := range modes {
-		if mode != study.ModeTyping {
-			out = append(out, mode)
+		if mode == want {
+			return true
 		}
 	}
-	return out
+	return false
 }

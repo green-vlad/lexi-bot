@@ -65,17 +65,17 @@ func TestDirectionFiltersModes(t *testing.T) {
 		t.Errorf("режимов %d, ожидались все: %v", len(produce), produce)
 	}
 
-	// Самооценка остаётся в обоих направлениях: это быстрый способ
-	// пройти пачку слов, и запрещать его нет причин.
+	// Выбор из вариантов остаётся в обоих направлениях: это единственный
+	// режим, которым можно спросить слово в любую сторону.
 	for _, direction := range study.Directions() {
-		var hasRecall bool
+		var hasChoice bool
 		for _, mode := range direction.Modes(all) {
-			if mode == study.ModeRecall {
-				hasRecall = true
+			if mode == study.ModeChoice {
+				hasChoice = true
 			}
 		}
-		if !hasRecall {
-			t.Errorf("направление %v потеряло самооценку", direction)
+		if !hasChoice {
+			t.Errorf("направление %v потеряло выбор из вариантов", direction)
 		}
 	}
 }

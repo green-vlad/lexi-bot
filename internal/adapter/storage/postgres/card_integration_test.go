@@ -388,7 +388,7 @@ func TestApplyRejectsBrokenOutcome(t *testing.T) {
 	next := study.CardState{State: study.StateReview, DueAt: testNow, IntervalDays: 1, EaseFactor: 2.5}
 	review, err := study.NewReview(study.ReviewParams{
 		CardID: card.ID, RatedAt: testNow, Rating: study.RatingGood,
-		Mode: study.ModeRecall, IsCorrect: true, Prev: card.CardState, Next: next,
+		Mode: study.ModeChoice, IsCorrect: true, Prev: card.CardState, Next: next,
 	})
 	if err != nil {
 		t.Fatalf("NewReview() вернул ошибку: %v", err)

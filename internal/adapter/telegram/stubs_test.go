@@ -198,13 +198,28 @@ func (s *stubLexemes) Translations(_ context.Context, ids []lexicon.LexemeID, _ 
 	return out, nil
 }
 
-// stubDeckSource отдаёт переводы других слов колоды как ложные варианты.
+// stubDeckSource отдаёт слова колоды и их переводы как ложные варианты.
 type stubDeckSource struct {
+	lexemes      map[lexicon.LexemeID]lexicon.Lexeme
 	translations map[lexicon.LexemeID][]lexicon.Translation
 }
 
-func (s *stubDeckSource) DistractorTerms(context.Context, port.DistractorQuery) ([]lexicon.Lexeme, error) {
-	return nil, nil
+// DistractorTerms отдаёт слова изучаемого языка: ими собираются варианты
+// в сторону «перевод → слово». Заглушка, молча отвечающая «ничего нет»,
+// делала бы это направление непроверяемым: сессия откатывалась бы к вводу
+// текстом, и тест видел бы не тот экран, который проверяет.
+func (s *stubDeckSource) DistractorTerms(_ context.Context, q port.DistractorQuery) ([]lexicon.Lexeme, error) {
+	var out []lexicon.Lexeme
+	for id, lexeme := range s.lexemes {
+		if id == q.Exclude {
+			continue
+		}
+		if q.Limit > 0 && len(out) >= q.Limit {
+			break
+		}
+		out = append(out, lexeme)
+	}
+	return out, nil
 }
 
 func (s *stubDeckSource) Distractors(_ context.Context, q port.DistractorQuery) ([]lexicon.Translation, error) {

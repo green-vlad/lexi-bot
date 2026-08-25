@@ -23,6 +23,7 @@ import (
 // корейских слогов должно проходить так же, как из десяти латинских букв).
 const (
 	MaxTermLen        = 200
+	MaxExampleLen     = 500
 	MaxReadingLen     = 200
 	MaxTranslationLen = 300
 	MaxNoteLen        = 500

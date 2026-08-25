@@ -416,6 +416,7 @@ func TestRunConvertsUpdates(t *testing.T) {
 	callback := byID[2]
 	if callback.Callback == nil {
 		t.Fatal("нажатие кнопки не распознано")
+		return
 	}
 	if callback.Callback.Data != "rate:good" || callback.Callback.ID != "cb-7" {
 		t.Errorf("callback = %+v", callback.Callback)
@@ -430,6 +431,7 @@ func TestRunConvertsUpdates(t *testing.T) {
 	document := byID[3]
 	if document.Document == nil {
 		t.Fatal("присланный файл не распознан")
+		return
 	}
 	if document.Document.FileName != "words.csv" || document.Document.Size != 2048 {
 		t.Errorf("файл = %+v", document.Document)

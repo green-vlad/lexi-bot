@@ -142,6 +142,7 @@ func TestLangIsReported(t *testing.T) {
 	fallback := catalog.For(user.UILang("ko"))
 	if fallback == nil {
 		t.Fatal("For() вернул nil для неподдерживаемого языка")
+		return
 	}
 	if fallback.Lang() != user.DefaultUILang {
 		t.Errorf("Lang() = %q, ожидался язык по умолчанию", fallback.Lang())

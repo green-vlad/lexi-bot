@@ -34,7 +34,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WithReminderAt() вернул ошибку: %v", err)
 	}
-	want, err = want.WithQuizModes([]study.Mode{study.ModeTyping, study.ModeRecall})
+	want, err = want.WithQuizModes([]study.Mode{study.ModeTyping})
 	if err != nil {
 		t.Fatalf("WithQuizModes() вернул ошибку: %v", err)
 	}
@@ -62,8 +62,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if !got.ReverseDirection {
 		t.Error("ReverseDirection не сохранился")
 	}
-	if len(got.QuizModes) != 2 || !got.ModeEnabled(study.ModeRecall) || !got.ModeEnabled(study.ModeTyping) {
-		t.Errorf("QuizModes = %v, ожидались recall и typing", got.QuizModes)
+	if len(got.QuizModes) != 1 || !got.ModeEnabled(study.ModeTyping) {
+		t.Errorf("QuizModes = %v, ожидался только typing", got.QuizModes)
 	}
 	if got.ModeEnabled(study.ModeChoice) {
 		t.Error("режим choice не включался")

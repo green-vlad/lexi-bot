@@ -44,9 +44,6 @@ other = "Сегодня добавлено {{.Count}} новых слова"
 [session.finished]
 other = "На сегодня всё. Следующее повторение — {{.NextAt}}."
 
-[session.show_translation]
-other = "Показать перевод"
-
 [settings.new_per_day]
 description = "Текущий дневной лимит новых слов"
 one = "Сейчас {{.Count}} новое слово в день"
@@ -105,24 +102,6 @@ other = "{{.Term}}"
 [learn.card_with_reading]
 other = "{{.Term}}\n{{.Reading}}"
 
-[learn.show_translation]
-other = "Показать перевод"
-
-[learn.rate_again]
-other = "Не помню"
-
-[learn.rate_hard]
-other = "С трудом"
-
-[learn.rate_good]
-other = "Помню"
-
-[learn.rate_easy]
-other = "Легко"
-
-[learn.revealed]
-other = "{{.Term}} — {{.Translation}}\n\nКак прошло?"
-
 [learn.next]
 other = "Дальше →"
 
@@ -140,6 +119,9 @@ other = "Эта карточка уже отвечена. Продолжить: 
 
 [learn.choose_translation]
 other = "Выберите перевод:"
+
+[learn.type_myself]
+other = "✍️ Напишу сам"
 
 [learn.answer_correct]
 other = "Верно: {{.Term}} — {{.Translation}}"

@@ -9,36 +9,6 @@ import (
 	"lexi-bot/internal/domain/study"
 )
 
-func TestResolveRecall(t *testing.T) {
-	t.Parallel()
-
-	// В режиме «помню / не помню» оценку выбирает сам пользователь,
-	// и резолвер обязан пропустить её без изменений.
-	resolver := study.DefaultRatingResolver()
-
-	for _, rating := range study.Ratings() {
-		got, err := resolver.Resolve(study.Answer{Mode: study.ModeRecall, SelfRating: rating})
-		if err != nil {
-			t.Fatalf("Resolve() вернул ошибку: %v", err)
-		}
-		if got != rating {
-			t.Errorf("Resolve() = %v, ожидалось %v", got, rating)
-		}
-	}
-
-	// Даже мгновенный ответ не превращается в «легко»: пользователь уже сказал,
-	// как ему было.
-	got, err := resolver.Resolve(study.Answer{
-		Mode: study.ModeRecall, SelfRating: study.RatingGood, Elapsed: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatalf("Resolve() вернул ошибку: %v", err)
-	}
-	if got != study.RatingGood {
-		t.Errorf("Resolve() = %v, ожидалось good", got)
-	}
-}
-
 func TestResolveChoice(t *testing.T) {
 	t.Parallel()
 
@@ -167,8 +137,7 @@ func TestResolveErrors(t *testing.T) {
 	}{
 		{"без режима", study.Answer{}, study.ErrInvalid},
 		{"неизвестный режим", study.Answer{Mode: study.Mode("dictation")}, study.ErrInvalid},
-		{"recall без оценки", study.Answer{Mode: study.ModeRecall}, study.ErrRequired},
-		{"recall с неизвестной оценкой", study.Answer{Mode: study.ModeRecall, SelfRating: study.Rating(9)}, study.ErrRequired},
+		{"убранный режим самооценки", study.Answer{Mode: study.Mode("recall")}, study.ErrInvalid},
 	}
 
 	for _, tt := range tests {
@@ -234,9 +203,6 @@ func TestAnswerIsCorrect(t *testing.T) {
 		answer study.Answer
 		want   bool
 	}{
-		{"recall: вспомнил", study.Answer{Mode: study.ModeRecall, SelfRating: study.RatingHard}, true},
-		{"recall: не вспомнил", study.Answer{Mode: study.ModeRecall, SelfRating: study.RatingAgain}, false},
-		{"recall: оценки нет", study.Answer{Mode: study.ModeRecall}, false},
 		{"choice: верно", study.Answer{Mode: study.ModeChoice, Correct: true}, true},
 		{"choice: неверно", study.Answer{Mode: study.ModeChoice}, false},
 		{"typing: точно", study.Answer{Mode: study.ModeTyping, Match: lexicon.MatchExact}, true},

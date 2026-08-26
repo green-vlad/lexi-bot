@@ -86,7 +86,7 @@ func (s Settings) Validate() error {
 
 // WithQuizModes возвращает копию настроек с другим набором режимов проверки.
 // Набор приводится к каноничному порядку без повторов, поэтому «typing, typing,
-// recall» и «recall, typing» дают одни и те же настройки.
+// choice» и «choice, typing» дают одни и те же настройки.
 func (s Settings) WithQuizModes(modes []study.Mode) (Settings, error) {
 	canonical := make([]study.Mode, 0, len(modes))
 	for _, known := range study.Modes() {

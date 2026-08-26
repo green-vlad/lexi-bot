@@ -25,8 +25,6 @@ type Answer struct {
 	Text string
 	// Correct — выбран ли правильный вариант (режим выбора).
 	Correct bool
-	// SelfRating — как человек оценил себя сам (режим узнавания).
-	SelfRating study.Rating
 	// Elapsed — сколько времени занял ответ.
 	Elapsed time.Duration
 }
@@ -169,10 +167,9 @@ type graded struct {
 // grade проверяет ответ и превращает его в оценку.
 func (s *Service) grade(answer Answer, accepted []string, lang lexicon.Language) (graded, error) {
 	resolved := study.Answer{
-		Mode:       answer.Mode,
-		SelfRating: answer.SelfRating,
-		Correct:    answer.Correct,
-		Elapsed:    answer.Elapsed,
+		Mode:    answer.Mode,
+		Correct: answer.Correct,
+		Elapsed: answer.Elapsed,
 	}
 
 	var match lexicon.Match

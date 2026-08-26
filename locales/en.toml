@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/learn — study\n/decks — my courses\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -204,3 +204,52 @@ other = "The course «{{.Deck}}» is paused: no cards, no reminders."
 
 [decks.archived]
 other = "The course «{{.Deck}}» is archived. Your progress is kept."
+
+[menu.title]
+other = "What shall we do?"
+
+[menu.nothing]
+other = "That's all for today: nothing to review, no new words left. See you tomorrow."
+
+[menu.review]
+description = "Button that starts a review, with the card count"
+one = "🔁 Review {{.Count}} word"
+other = "🔁 Review {{.Count}} words"
+
+[menu.new_words]
+description = "Button that starts learning new words, with their count"
+one = "✨ {{.Count}} new word"
+other = "✨ {{.Count}} new words"
+
+[menu.back]
+other = "← Back to menu"
+
+[intro.card]
+other = "{{.Term}}\n{{.Translation}}"
+
+[intro.card_with_reading]
+other = "{{.Term}}\n{{.Reading}}\n{{.Translation}}"
+
+[intro.card_with_example]
+other = "{{.Term}}\n{{.Translation}}\n\n{{.Example}}"
+
+[intro.card_full]
+other = "{{.Term}}\n{{.Reading}}\n{{.Translation}}\n\n{{.Example}}"
+
+[intro.remember]
+other = "✅ Got it"
+
+[intro.known]
+other = "👌 I already know this word"
+
+[intro.skip]
+other = "⏭ Skip"
+
+[intro.done_daily_limit]
+other = "You've reached today's quota of new words. More tomorrow."
+
+[intro.done_deck]
+other = "No new words left in the deck — you've been through all of it."
+
+[intro.done_paused]
+other = "The course is paused. You can resume it in /decks."

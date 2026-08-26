@@ -89,8 +89,8 @@ func TestSubmitTypingExactAnswer(t *testing.T) {
 	if outcome.Match != lexicon.MatchExact {
 		t.Errorf("совпадение = %v, ожидалось точное", outcome.Match)
 	}
-	if outcome.Card.State != study.StateLearning {
-		t.Errorf("фаза = %v, ожидалось обучение: карточка была новой", outcome.Card.State)
+	if outcome.Card.State != study.StateReview {
+		t.Errorf("фаза = %v, ожидалось повторение", outcome.Card.State)
 	}
 
 	// Записалось всё сразу: карточка, журнал и признак верного ответа.

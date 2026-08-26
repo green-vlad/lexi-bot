@@ -55,52 +55,98 @@ func (f *fakeCards) Due(_ context.Context, q port.DueQuery) ([]study.Card, error
 	return due, nil
 }
 
-func (f *fakeCards) IntroduceNew(_ context.Context, q port.IntroduceQuery) ([]study.Card, error) {
+func (f *fakeCards) CountDue(ctx context.Context, courseID study.CourseID, now time.Time) (int, error) {
+	due, err := f.Due(ctx, port.DueQuery{CourseID: courseID, Now: now, Limit: len(f.cards) + 1})
+	return len(due), err
+}
+
+// NewWords отдаёт слова, для которых карточки ещё нет, и отложенные, чей срок
+// возврата уже прошёл, — в порядке колоды.
+func (f *fakeCards) NewWords(_ context.Context, q port.NewWordQuery) ([]lexicon.LexemeID, error) {
 	if f.failWith != nil {
 		return nil, f.failWith
 	}
-
-	counter := f.counters.get(q.CourseID, q.Day)
-	remaining := q.Limit - counter.NewIntroduced
-	if q.Batch > 0 && q.Batch < remaining {
-		remaining = q.Batch
-	}
-	if remaining <= 0 {
+	if q.Limit <= 0 {
 		return nil, nil
 	}
 
-	introduced := make([]study.Card, 0, remaining)
+	var out []lexicon.LexemeID
 	for _, lexemeID := range f.pool {
-		if len(introduced) >= remaining {
+		if len(out) >= q.Limit {
 			break
 		}
-		if f.hasCard(lexemeID) {
+		card, ok := f.byLexeme(lexemeID)
+		if ok && (card.State != study.StateNew || card.DueAt.After(q.Now)) {
 			continue
 		}
-
-		f.nextID++
-		card := study.Card{
-			ID:           f.nextID,
-			CourseID:     q.CourseID,
-			LexemeID:     lexemeID,
-			CardState:    study.NewCardState(q.Now),
-			IntroducedAt: q.Now,
-		}
-		f.cards = append(f.cards, card)
-		introduced = append(introduced, card)
+		out = append(out, lexemeID)
 	}
-
-	f.counters.addNew(q.CourseID, q.Day, len(introduced))
-	return introduced, nil
+	return out, nil
 }
 
-func (f *fakeCards) hasCard(lexemeID lexicon.LexemeID) bool {
+func (f *fakeCards) StartLearning(_ context.Context, q *port.StartLearningQuery) (study.Card, bool, error) {
+	if f.failWith != nil {
+		return study.Card{}, false, f.failWith
+	}
+	if q.Limit <= 0 || f.counters.get(q.CourseID, q.Day).NewIntroduced >= q.Limit {
+		return study.Card{}, false, nil
+	}
+
+	card := f.upsert(q.CourseID, q.LexemeID, q.State, q.Now)
+	f.counters.addNew(q.CourseID, q.Day, 1)
+	return card, true, nil
+}
+
+func (f *fakeCards) MarkKnown(_ context.Context, courseID study.CourseID, lexemeID lexicon.LexemeID, now time.Time) error {
+	if f.failWith != nil {
+		return f.failWith
+	}
+	f.upsert(courseID, lexemeID, study.CardState{
+		State: study.StateKnown, DueAt: now, EaseFactor: study.DefaultEaseFactor,
+	}, now)
+	return nil
+}
+
+func (f *fakeCards) PostponeNew(_ context.Context, courseID study.CourseID, lexemeID lexicon.LexemeID, now, until time.Time) error {
+	if f.failWith != nil {
+		return f.failWith
+	}
+	f.upsert(courseID, lexemeID, study.CardState{
+		State: study.StateNew, DueAt: until, EaseFactor: study.DefaultEaseFactor,
+	}, now)
+	return nil
+}
+
+// upsert заводит карточку или переводит существующую в новое состояние.
+// Как и в базе, тронуть можно только карточку, которую ещё не начали учить.
+func (f *fakeCards) upsert(courseID study.CourseID, lexemeID lexicon.LexemeID, state study.CardState, now time.Time) study.Card {
+	for i := range f.cards {
+		if f.cards[i].LexemeID != lexemeID || f.cards[i].CourseID != courseID {
+			continue
+		}
+		if f.cards[i].State == study.StateNew {
+			f.cards[i].CardState = state
+			f.cards[i].IntroducedAt = now
+		}
+		return f.cards[i]
+	}
+
+	f.nextID++
+	card := study.Card{
+		ID: f.nextID, CourseID: courseID, LexemeID: lexemeID,
+		CardState: state, IntroducedAt: now,
+	}
+	f.cards = append(f.cards, card)
+	return card
+}
+
+func (f *fakeCards) byLexeme(lexemeID lexicon.LexemeID) (study.Card, bool) {
 	for i := range f.cards {
 		if f.cards[i].LexemeID == lexemeID {
-			return true
+			return f.cards[i], true
 		}
 	}
-	return false
+	return study.Card{}, false
 }
 
 func (f *fakeCards) Apply(_ context.Context, outcome *port.ReviewOutcome) error {
@@ -249,6 +295,22 @@ func newFixture(t *testing.T, words int) *fixture {
 	}
 
 	f.cards = &fakeCards{pool: pool, counters: f.counters}
+	// Слова уже начаты: повторяются только они, а знакомство с новыми —
+	// отдельный сценарий (usecase/intro). Первое слово ждёт дольше всех:
+	// очередь идёт по сроку, и тесты рассчитывают на порядок из пула.
+	for i, id := range pool {
+		f.cards.nextID++
+		f.cards.cards = append(f.cards.cards, study.Card{
+			ID: f.cards.nextID, CourseID: courseID, LexemeID: id,
+			CardState: study.CardState{
+				State:        study.StateReview,
+				DueAt:        f.now.Add(-time.Duration(len(pool)-i) * time.Minute),
+				IntervalDays: 1, EaseFactor: 2.5, Repetitions: 2,
+			},
+			IntroducedAt:   f.now.AddDate(0, 0, -3),
+			LastReviewedAt: f.now.AddDate(0, 0, -1),
+		})
+	}
 	f.decks = &fakeDecks{}
 	f.rand = &fakeRand{}
 	f.reviews = &switchableReviews{}
@@ -287,89 +349,10 @@ func (f *fixture) next(t *testing.T) (session.Item, session.Reason) {
 	return item, reason
 }
 
-func TestNextIntroducesNewOneAtATime(t *testing.T) {
+func TestNextTakesMostOverdueFirst(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, 5)
-	f.settings.settings.NewPerDay = 3
-
-	item, reason := f.next(t)
-	if reason != session.ReasonNone {
-		t.Fatalf("причина = %v, ожидалась карточка", reason)
-	}
-	if item.Card.State != study.StateNew {
-		t.Errorf("фаза = %v, ожидалась new", item.Card.State)
-	}
-	if item.Lexeme.ID != item.Card.LexemeID {
-		t.Errorf("слово не соответствует карточке: %+v", item)
-	}
-	if len(item.Translations) == 0 {
-		t.Error("карточка без переводов: показывать нечего")
-	}
-
-	// Вводится ровно одно слово: человек, бросивший занятие после первой
-	// карточки, не должен терять весь дневной лимит.
-	counter, err := f.counters.Get(context.Background(), courseID, f.settings.settings.DayStart(f.now))
-	if err != nil {
-		t.Fatalf("Get() вернул ошибку: %v", err)
-	}
-	if counter.NewIntroduced != 1 {
-		t.Errorf("введено %d слов, ожидалось одно", counter.NewIntroduced)
-	}
-}
-
-func TestNextHonoursNewPerDay(t *testing.T) {
-	t.Parallel()
-
-	f := newFixture(t, 10)
-	f.settings.settings.NewPerDay = 3
-
-	// Три новых слова подряд: каждое отвечено, чтобы освободить очередь.
-	for i := 0; i < 3; i++ {
-		item, reason := f.next(t)
-		if reason != session.ReasonNone {
-			t.Fatalf("карточка %d: причина = %v", i+1, reason)
-		}
-		f.answer(t, &item)
-	}
-
-	// Четвёртого не будет: дневной лимит выбран, хотя слова в колоде есть.
-	_, reason := f.next(t)
-	if reason != session.ReasonDailyLimit {
-		t.Errorf("причина = %v, ожидался дневной лимит", reason)
-	}
-}
-
-func TestNextResetsLimitNextDay(t *testing.T) {
-	t.Parallel()
-
-	f := newFixture(t, 10)
-	f.settings.settings.NewPerDay = 1
-
-	item, _ := f.next(t)
-	f.answer(t, &item)
-
-	if _, reason := f.next(t); reason != session.ReasonDailyLimit {
-		t.Fatalf("причина = %v, ожидался дневной лимит", reason)
-	}
-
-	// Наступили новые сутки — в таймзоне пользователя, а не в UTC.
-	// В Сеуле полночь наступает на девять часов раньше.
-	f.now = f.now.Add(15 * time.Hour)
-	if got := f.settings.settings.DayStart(f.now).Format(time.DateOnly); got != "2026-08-25" {
-		t.Fatalf("подготовка теста: сутки пользователя = %s", got)
-	}
-
-	if _, reason := f.next(t); reason != session.ReasonNone {
-		t.Errorf("причина = %v, ожидалась новая карточка: сутки сменились", reason)
-	}
-}
-
-func TestNextPrefersOverdueOverNew(t *testing.T) {
-	t.Parallel()
-
-	f := newFixture(t, 5)
-	f.settings.settings.NewPerDay = 5
 
 	// Просроченная карточка ждёт со вчера, ещё одна подошла минуту назад.
 	f.cards.cards = []study.Card{
@@ -400,11 +383,6 @@ func TestNextPrefersOverdueOverNew(t *testing.T) {
 	if item.Card.ID != 101 {
 		t.Errorf("показана карточка %d, ожидалась просроченная 101", item.Card.ID)
 	}
-
-	counter, _ := f.counters.Get(context.Background(), courseID, f.settings.settings.DayStart(f.now))
-	if counter.NewIntroduced != 0 {
-		t.Error("новое слово введено, пока были непросмотренные повторения")
-	}
 }
 
 func TestNextStopsOnDailyReviewCap(t *testing.T) {
@@ -427,11 +405,10 @@ func TestNextStopsOnDailyReviewCap(t *testing.T) {
 	}
 }
 
-func TestNextWhenDeckIsExhausted(t *testing.T) {
+func TestNextWhenEverythingIsReviewed(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, 2)
-	f.settings.settings.NewPerDay = 10
 
 	for i := 0; i < 2; i++ {
 		item, reason := f.next(t)
@@ -441,8 +418,7 @@ func TestNextWhenDeckIsExhausted(t *testing.T) {
 		f.answer(t, &item)
 	}
 
-	// Лимит не выбран, но слова в колоде кончились — это «на сегодня всё»
-	// по другой причине, и сказать об этом надо иначе.
+	// Лимит не выбран, но повторять больше нечего.
 	if _, reason := f.next(t); reason != session.ReasonCaughtUp {
 		t.Errorf("причина = %v, ожидалось ReasonCaughtUp", reason)
 	}

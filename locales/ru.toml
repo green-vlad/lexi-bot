@@ -22,7 +22,7 @@ other = "Привет, {{.Name}}! Я помогу выучить слова — 
 other = "Выберите язык интерфейса."
 
 [help.text]
-other = "Вот что я умею:\n\n/learn — заниматься\n/decks — мои курсы\n/start — начать заново\n/language — язык интерфейса\n/cancel — прервать диалог\n/help — эта справка\n\nОстальное (свои слова, статистика, напоминания) появится в ближайших обновлениях."
+other = "Вот что я умею:\n\n/learn — заниматься: повторить слова или взять новые\n/decks — мои курсы\n/start — начать заново\n/language — язык интерфейса\n/cancel — прервать диалог\n/help — эта справка\n\nОстальное (свои слова, статистика, напоминания) появится в ближайших обновлениях."
 
 [language.changed]
 other = "Язык интерфейса переключён на русский."
@@ -220,3 +220,56 @@ other = "Курс «{{.Deck}}» на паузе: карточки не выда�
 
 [decks.archived]
 other = "Курс «{{.Deck}}» убран в архив. Прогресс сохранён."
+
+[menu.title]
+other = "Чем займёмся?"
+
+[menu.nothing]
+other = "На сегодня всё: повторять нечего, новые слова кончились. Возвращайтесь завтра."
+
+[menu.review]
+description = "Кнопка перехода к повторению, с числом карточек"
+one = "🔁 Повторить {{.Count}} слово"
+few = "🔁 Повторить {{.Count}} слова"
+many = "🔁 Повторить {{.Count}} слов"
+other = "🔁 Повторить {{.Count}} слова"
+
+[menu.new_words]
+description = "Кнопка перехода к знакомству, с числом слов"
+one = "✨ {{.Count}} новое слово"
+few = "✨ {{.Count}} новых слова"
+many = "✨ {{.Count}} новых слов"
+other = "✨ {{.Count}} новых слова"
+
+[menu.back]
+other = "← В меню"
+
+[intro.card]
+other = "{{.Term}}\n{{.Translation}}"
+
+[intro.card_with_reading]
+other = "{{.Term}}\n{{.Reading}}\n{{.Translation}}"
+
+[intro.card_with_example]
+other = "{{.Term}}\n{{.Translation}}\n\n{{.Example}}"
+
+[intro.card_full]
+other = "{{.Term}}\n{{.Reading}}\n{{.Translation}}\n\n{{.Example}}"
+
+[intro.remember]
+other = "✅ Запомнил"
+
+[intro.known]
+other = "👌 Я уже знаю это слово"
+
+[intro.skip]
+other = "⏭ Пропустить"
+
+[intro.done_daily_limit]
+other = "Дневная норма новых слов набрана. Завтра будут следующие."
+
+[intro.done_deck]
+other = "Новых слов в колоде не осталось — вы прошли её целиком."
+
+[intro.done_paused]
+other = "Курс на паузе. Продолжить можно в /decks."

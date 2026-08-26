@@ -112,9 +112,10 @@ func TestSummaryWithoutCards(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t, 5)
+	// Карточек нет вовсе: курс только что заведён, слова ещё не начинали.
+	f.cards.cards = nil
 
-	// Курс только что заведён: повторять нечего, и сводка не должна
-	// выдумывать срок.
+	// Повторять нечего, и сводка не должна выдумывать срок.
 	summary, err := f.service.Summary(context.Background(), courseID)
 	if err != nil {
 		t.Fatalf("Summary() вернул ошибку: %v", err)

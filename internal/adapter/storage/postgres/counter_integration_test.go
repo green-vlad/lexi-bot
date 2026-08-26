@@ -149,11 +149,7 @@ func TestCounterCountsNewAndReviewsSeparately(t *testing.T) {
 
 	f := newCourse(t, pool, 3)
 
-	if _, err := cards.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 2,
-	}); err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
+	start(t, cards, f.course.ID, f.lexemes, 2)
 	if err := counters.AddReview(ctx, f.course.ID, testDay); err != nil {
 		t.Fatalf("AddReview() вернул ошибку: %v", err)
 	}
@@ -201,13 +197,7 @@ func TestReviewAddAndStats(t *testing.T) {
 	repo := postgres.NewReviewRepo(pool)
 
 	f := newCourse(t, pool, 1)
-	cards, err := postgres.NewCardRepo(pool).IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 1,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-	card := cards[0]
+	card := start(t, postgres.NewCardRepo(pool), f.course.ID, f.lexemes, 1)[0]
 
 	for i, correct := range []bool{true, true, false, true} {
 		review := makeReview(t, card.ID, testNow.Add(time.Duration(i)*time.Minute), correct)
@@ -252,13 +242,7 @@ func TestReviewActiveDaysUseUserTimezone(t *testing.T) {
 	repo := postgres.NewReviewRepo(pool)
 
 	f := newCourse(t, pool, 1)
-	cards, err := postgres.NewCardRepo(pool).IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 1,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-	card := cards[0]
+	card := start(t, postgres.NewCardRepo(pool), f.course.ID, f.lexemes, 1)[0]
 
 	// Все три ответа приходятся на 21 августа по UTC, но по Сеулу это два
 	// разных дня: занимавшийся два вечера подряд не должен терять серию
@@ -311,12 +295,7 @@ func TestReviewStatsByCourse(t *testing.T) {
 	repo := postgres.NewReviewRepo(pool)
 
 	f := newCourse(t, pool, 2)
-	cards, err := postgres.NewCardRepo(pool).IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 2,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
+	cards := start(t, postgres.NewCardRepo(pool), f.course.ID, f.lexemes, 2)
 
 	// Второй курс того же пользователя: его ответы в сводку первого
 	// попадать не должны.
@@ -333,12 +312,7 @@ func TestReviewStatsByCourse(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AddItems() вернул ошибку: %v", err)
 	}
-	otherCards, err := postgres.NewCardRepo(pool).IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: other.ID, Now: testNow, Day: testDay, Limit: 1,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
+	otherCards := start(t, postgres.NewCardRepo(pool), other.ID, otherLexemes, 1)
 
 	for _, item := range []struct {
 		card    study.CardID
@@ -387,12 +361,7 @@ func TestCardNextDue(t *testing.T) {
 		t.Fatalf("NextDue() = %t, %v; ожидалось «нечего»", ok, err)
 	}
 
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 3,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
+	cards := start(t, repo, f.course.ID, f.lexemes, 3)
 
 	set := func(id study.CardID, due time.Time, state string) {
 		t.Helper()

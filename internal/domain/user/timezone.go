@@ -91,6 +91,14 @@ func (tz Timezone) DayStart(t time.Time) time.Time {
 	return start
 }
 
+// NextDayStart возвращает начало следующих суток пользователя.
+//
+// Сутки прибавляются календарно, а не двадцатью четырьмя часами: в день
+// перевода часов сутки короче или длиннее, и «завтра» от этого не сдвигается.
+func (tz Timezone) NextDayStart(t time.Time) time.Time {
+	return tz.DayStart(tz.DayStart(t).AddDate(0, 0, 1))
+}
+
 // SameDay сообщает, что два момента приходятся на одни календарные сутки
 // пользователя. Так дневной счётчик понимает, что лимит пора обнулить.
 func (tz Timezone) SameDay(a, b time.Time) bool {

@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -286,3 +286,41 @@ other = "Could not read the word: check that it is not empty and not too long."
 
 [decks.personal]
 other = "My words: {{.Language}}"
+[import.how]
+other = "Send a CSV file with your words. The term and translation columns are required; reading, part of speech and example are optional:\n\nterm,translation,reading,pos,example\n사람,человек;люди,saram,noun,좋은 사람입니다\n\nSeparate several meanings with «;». Columns are separated by a comma or a semicolon, the encoding is UTF-8, up to 2 MB and 5000 rows."
+
+[import.not_csv]
+other = "I only read CSV. What the file should look like — /import"
+
+[import.too_large]
+other = "The file is over two megabytes. Split it up or drop the extra columns."
+
+[import.no_course]
+other = "Pick what to study first: /start"
+
+[import.rejected]
+other = "Could not read the file: {{.Reason}}.\n\nWhat the file should look like — /import"
+
+[import.imported]
+description = "How many words were loaded from the file"
+one = "Loaded {{.Count}} word."
+other = "Loaded {{.Count}} words."
+
+[import.duplicates]
+description = "How many rows were skipped as already known"
+one = "{{.Count}} word was already there — skipped."
+other = "{{.Count}} words were already there — skipped."
+
+[import.failed]
+description = "How many rows were rejected"
+one = "{{.Count}} row could not be read."
+other = "{{.Count}} rows could not be read."
+
+[import.report_caption]
+other = "The rows that could not be read."
+
+[import.report_line]
+other = "line"
+
+[import.report_reason]
+other = "reason"

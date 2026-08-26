@@ -21,7 +21,14 @@ import (
 type fakeMessenger struct {
 	mu   sync.Mutex
 	sent []port.OutgoingMessage
+	docs []port.Document
 	err  error
+	// files — содержимое присланных файлов по идентификатору. Заглушка,
+	// отдающая пустоту, сделала бы бессмысленным любой тест импорта.
+	files map[string][]byte
+	// downloaded — с каким пределом размера просили файл: качать без
+	// предела то, что пришло из внешнего мира, нельзя.
+	downloaded []int64
 }
 
 func (m *fakeMessenger) SendMessage(_ context.Context, msg port.OutgoingMessage) (port.MessageID, error) {
@@ -35,10 +42,41 @@ func (m *fakeMessenger) SendMessage(_ context.Context, msg port.OutgoingMessage)
 	return port.MessageID(len(m.sent)), nil
 }
 
-func (m *fakeMessenger) EditMessage(context.Context, port.MessageEdit) error         { return nil }
-func (m *fakeMessenger) AnswerCallback(context.Context, port.CallbackAnswer) error   { return nil }
-func (m *fakeMessenger) SendDocument(context.Context, port.Document) error           { return nil }
-func (m *fakeMessenger) DownloadFile(context.Context, string, int64) ([]byte, error) { return nil, nil }
+func (m *fakeMessenger) EditMessage(context.Context, port.MessageEdit) error       { return nil }
+func (m *fakeMessenger) AnswerCallback(context.Context, port.CallbackAnswer) error { return nil }
+func (m *fakeMessenger) SendDocument(_ context.Context, doc port.Document) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.err != nil {
+		return m.err
+	}
+	m.docs = append(m.docs, doc)
+	return nil
+}
+
+func (m *fakeMessenger) DownloadFile(_ context.Context, fileID string, maxBytes int64) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.downloaded = append(m.downloaded, maxBytes)
+	if content, ok := m.files[fileID]; ok {
+		return content, nil
+	}
+	return nil, port.ErrNotFound
+}
+
+// lastDoc возвращает последний отправленный файл.
+func (m *fakeMessenger) lastDoc(t *testing.T) port.Document {
+	t.Helper()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.docs) == 0 {
+		t.Fatal("боту следовало отправить файл, но он не отправил")
+	}
+	return m.docs[len(m.docs)-1]
+}
 
 func (m *fakeMessenger) last(t *testing.T) port.OutgoingMessage {
 	t.Helper()

@@ -209,13 +209,42 @@ func (s *stubCounters) AddReview(_ context.Context, _ study.CourseID, day time.T
 type stubLexemes struct {
 	lexemes      map[lexicon.LexemeID]lexicon.Lexeme
 	translations map[lexicon.LexemeID][]lexicon.Translation
+	nextID       lexicon.LexemeID
 }
 
-func (s *stubLexemes) Upsert(context.Context, []lexicon.Lexeme) ([]port.Upserted, error) {
-	return nil, nil
+func newStubLexemes() *stubLexemes {
+	return &stubLexemes{
+		lexemes:      map[lexicon.LexemeID]lexicon.Lexeme{},
+		translations: map[lexicon.LexemeID][]lexicon.Translation{},
+	}
 }
 
-func (s *stubLexemes) ByTerm(context.Context, lexicon.Language, string, int64) (lexicon.Lexeme, error) {
+// addLexeme кладёт слово в словарь и возвращает его идентификатор.
+func (s *stubLexemes) addLexeme(lexeme *lexicon.Lexeme) lexicon.LexemeID {
+	s.nextID++
+	lexeme.ID = s.nextID
+	s.lexemes[lexeme.ID] = *lexeme
+	return lexeme.ID
+}
+
+// Upsert сохраняет слова. Заглушка, возвращавшая пустоту, оставляла бы
+// добавленное слово без идентификатора — и всё, что за ним, разваливалось бы.
+func (s *stubLexemes) Upsert(_ context.Context, lexemes []lexicon.Lexeme) ([]port.Upserted, error) {
+	out := make([]port.Upserted, 0, len(lexemes))
+	for i := range lexemes {
+		id := s.addLexeme(&lexemes[i])
+		out = append(out, port.Upserted{Lexeme: s.lexemes[id], Created: true})
+	}
+	return out, nil
+}
+
+// ByTerm ищет слово по написанию среди встроенных или личных.
+func (s *stubLexemes) ByTerm(_ context.Context, lang lexicon.Language, term string, ownerID int64) (lexicon.Lexeme, error) {
+	for _, lexeme := range s.lexemes {
+		if lexeme.Lang == lang && lexeme.Term == term && lexeme.OwnerID == ownerID {
+			return lexeme, nil
+		}
+	}
 	return lexicon.Lexeme{}, port.ErrNotFound
 }
 
@@ -229,7 +258,12 @@ func (s *stubLexemes) ByIDs(_ context.Context, ids []lexicon.LexemeID) ([]lexico
 	return out, nil
 }
 
-func (s *stubLexemes) SaveTranslations(context.Context, []lexicon.Translation) error { return nil }
+func (s *stubLexemes) SaveTranslations(_ context.Context, translations []lexicon.Translation) error {
+	for _, tr := range translations {
+		s.translations[tr.LexemeID] = append(s.translations[tr.LexemeID], tr)
+	}
+	return nil
+}
 
 func (s *stubLexemes) Translations(_ context.Context, ids []lexicon.LexemeID, _ lexicon.Language) (map[lexicon.LexemeID][]lexicon.Translation, error) {
 	out := map[lexicon.LexemeID][]lexicon.Translation{}

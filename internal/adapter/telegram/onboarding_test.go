@@ -426,6 +426,11 @@ func TestOnboardingHandlerNeedsDependencies(t *testing.T) {
 type stubDecks struct {
 	decks        map[lexicon.DeckID]lexicon.Deck
 	translations map[lexicon.DeckID][]lexicon.Language
+	items        map[lexicon.DeckID][]lexicon.DeckItem
+	nextID       lexicon.DeckID
+	// personal считает, сколько раз заводилась личная колода: тесты
+	// личного словаря проверяют, что лишних не появляется.
+	personal int
 }
 
 func newStubDecks() *stubDecks {
@@ -436,6 +441,8 @@ func newStubDecks() *stubDecks {
 		translations: map[lexicon.DeckID][]lexicon.Language{
 			1: {langEN, langRU},
 		},
+		items:  map[lexicon.DeckID][]lexicon.DeckItem{},
+		nextID: 1,
 	}
 }
 
@@ -486,10 +493,52 @@ func (s *stubDecks) EnsureBuiltin(context.Context, *lexicon.Deck) (lexicon.Deck,
 	return lexicon.Deck{}, nil
 }
 
-func (s *stubDecks) EnsurePersonal(context.Context, int64, lexicon.Language, string) (lexicon.Deck, error) {
-	return lexicon.Deck{}, nil
+// EnsurePersonal заводит личную колоду или возвращает прежнюю. Заглушка,
+// отдающая пустую колоду, сделала бы бессмысленными все тесты личного
+// словаря: слово уезжало бы в колоду с нулевым идентификатором.
+func (s *stubDecks) EnsurePersonal(_ context.Context, ownerID int64, lang lexicon.Language, title string) (lexicon.Deck, error) {
+	for _, deck := range s.decks {
+		if deck.OwnerID == ownerID && deck.Lang == lang {
+			return deck, nil
+		}
+	}
+	s.personal++
+	return s.addDeck(&lexicon.Deck{OwnerID: ownerID, Lang: lang, Title: title}), nil
 }
-func (s *stubDecks) AddItems(context.Context, []lexicon.DeckItem) error { return nil }
+
+// addDeck заводит колоду и возвращает её с присвоенным идентификатором.
+func (s *stubDecks) addDeck(deck *lexicon.Deck) lexicon.Deck {
+	s.nextID++
+	deck.ID = s.nextID
+	s.decks[deck.ID] = *deck
+	return *deck
+}
+
+func (s *stubDecks) AddItems(_ context.Context, items []lexicon.DeckItem) error {
+	for _, item := range items {
+		if err := item.Validate(); err != nil {
+			return err
+		}
+		if ok, _ := s.Contains(context.Background(), item.DeckID, item.LexemeID); ok {
+			continue
+		}
+		s.items[item.DeckID] = append(s.items[item.DeckID], item)
+
+		deck := s.decks[item.DeckID]
+		deck.Size = len(s.items[item.DeckID])
+		s.decks[item.DeckID] = deck
+	}
+	return nil
+}
+
+func (s *stubDecks) Contains(_ context.Context, deckID lexicon.DeckID, lexemeID lexicon.LexemeID) (bool, error) {
+	for _, item := range s.items[deckID] {
+		if item.LexemeID == lexemeID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 func (s *stubDecks) DistractorTerms(context.Context, port.DistractorQuery) ([]lexicon.Lexeme, error) {
 	return nil, nil
@@ -498,8 +547,8 @@ func (s *stubDecks) DistractorTerms(context.Context, port.DistractorQuery) ([]le
 func (s *stubDecks) Distractors(context.Context, port.DistractorQuery) ([]lexicon.Translation, error) {
 	return nil, nil
 }
-func (s *stubDecks) Items(context.Context, lexicon.DeckID, int, int) ([]lexicon.DeckItem, error) {
-	return nil, nil
+func (s *stubDecks) Items(_ context.Context, deckID lexicon.DeckID, _, _ int) ([]lexicon.DeckItem, error) {
+	return s.items[deckID], nil
 }
 
 type stubCourses struct {
@@ -580,10 +629,4 @@ func (s *stubSettings) Get(_ context.Context, userID user.ID) (user.Settings, er
 func (s *stubSettings) Save(_ context.Context, userID user.ID, settings user.Settings) error {
 	s.byUser[userID] = settings
 	return nil
-}
-
-// Contains сообщает, есть ли слово в колоде. Личный словарь заглушке
-// не нужен: она обслуживает сценарии, которые своих слов не заводят.
-func (*stubDecks) Contains(context.Context, lexicon.DeckID, lexicon.LexemeID) (bool, error) {
-	return false, nil
 }

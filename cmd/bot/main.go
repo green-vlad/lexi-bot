@@ -35,6 +35,7 @@ import (
 	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
+	"lexi-bot/internal/usecase/vocab"
 	"lexi-bot/locales"
 )
 
@@ -233,12 +234,27 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
+	vocabService, err := vocab.New(vocab.Deps{
+		Users:   users,
+		Decks:   decks,
+		Lexemes: lexemes,
+		Courses: courseRepo,
+	})
+	if err != nil {
+		return nil, err
+	}
+	vocabHandler, err := telegram.NewVocab(vocabService, dialogs, transport)
+	if err != nil {
+		return nil, err
+	}
+
 	start.Register(r)
 	language.Register(r)
 	menu.Register(r)
 	learn.Register(r)
 	introHandler.Register(r)
 	decksHandler.Register(r)
+	vocabHandler.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
 	return r, nil

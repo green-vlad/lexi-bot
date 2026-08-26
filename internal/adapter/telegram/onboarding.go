@@ -521,6 +521,25 @@ func langName(localizer port.Localizer, code string) string {
 	return code
 }
 
+// deckTitle даёт название колоды на языке интерфейса.
+//
+// У встроенных колод оно записано в базе один раз и на всех, а у личной
+// собирается на месте: заведена она была на том языке, на котором человек
+// говорил в тот день, а язык интерфейса он может и сменить.
+func deckTitle(localizer port.Localizer, deck *lexicon.Deck) string {
+	if deck.IsBuiltin() {
+		return deck.Title
+	}
+
+	title, err := localizer.T("decks.personal", port.Args{
+		"Language": langName(localizer, deck.Lang.String()),
+	})
+	if err != nil {
+		return deck.Title
+	}
+	return title
+}
+
 // mustText возвращает перевод или ключ: надпись на кнопке не повод
 // прерывать диалог.
 func mustText(localizer port.Localizer, key string) string {

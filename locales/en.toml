@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -253,3 +253,36 @@ other = "No new words left in the deck — you've been through all of it."
 
 [intro.done_paused]
 other = "The course is paused. You can resume it in /decks."
+
+[add.ask_term]
+other = "Which word shall we add? Write it in the language you are learning."
+
+[add.ask_translation]
+other = "What does it mean? Separate several meanings with «;»."
+
+[add.ask_reading]
+other = "Reading or transcription?"
+
+[add.ask_example]
+other = "An example of use?"
+
+[add.skip]
+other = "Skip"
+
+[add.saved]
+other = "Added: {{.Term}} — {{.Translation}}\n\nThe word is waiting in your personal deck. Study it: /decks"
+
+[add.already]
+other = "«{{.Term}}» is already in your vocabulary."
+
+[add.in_course]
+other = "«{{.Term}}» is already in the deck you are studying — it will come up in its turn."
+
+[add.no_course]
+other = "Pick what to study first: /start"
+
+[add.invalid]
+other = "Could not read the word: check that it is not empty and not too long."
+
+[decks.personal]
+other = "My words: {{.Language}}"

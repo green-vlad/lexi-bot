@@ -94,7 +94,7 @@ func (d *Decks) render(localizer port.Localizer, summaries []courses.Summary) (s
 	for i := range summaries {
 		summary := &summaries[i]
 		args := port.Args{
-			"Deck":    summary.Deck.Title,
+			"Deck":    deckTitle(localizer, &summary.Deck),
 			"Learned": summary.Learned,
 			"Total":   summary.Total,
 		}
@@ -225,7 +225,7 @@ func (d *Decks) confirm(ctx context.Context, u *port.Update, courseID study.Cour
 	title := ""
 	for i := range summaries {
 		if summaries[i].Course.ID == courseID {
-			title = summaries[i].Deck.Title
+			title = deckTitle(localizer, &summaries[i].Deck)
 		}
 	}
 

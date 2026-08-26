@@ -23,6 +23,10 @@ const (
 	StateRelearning
 	// StateSuspended — карточка отложена и не выдаётся в сессии.
 	StateSuspended
+	// StateKnown — человек сказал «я уже знаю это слово» на знакомстве.
+	// Карточка остаётся в курсе, чтобы слово не предлагалось снова,
+	// но в повторения не попадает: учить в нём нечего.
+	StateKnown
 )
 
 var stateNames = map[State]string{
@@ -31,11 +35,12 @@ var stateNames = map[State]string{
 	StateReview:     "review",
 	StateRelearning: "relearning",
 	StateSuspended:  "suspended",
+	StateKnown:      "known",
 }
 
 // States возвращает все фазы в порядке естественного продвижения карточки.
 func States() []State {
-	return []State{StateNew, StateLearning, StateReview, StateRelearning, StateSuspended}
+	return []State{StateNew, StateLearning, StateReview, StateRelearning, StateSuspended, StateKnown}
 }
 
 // ParseState разбирает фазу из строки — так она хранится в базе.
@@ -70,3 +75,13 @@ func (s State) IsValid() bool {
 // IsLearning сообщает, что карточка на шагах обучения — первичных или
 // повторных. В этой фазе интервалы измеряются минутами, а не сутками.
 func (s State) IsLearning() bool { return s == StateLearning || s == StateRelearning }
+
+// InRepetition сообщает, что карточка участвует в повторениях.
+//
+// Не участвуют три фазы, и по разным причинам. Новая карточка ещё ждёт
+// знакомства: человек не видел ни слова, ни перевода, и спрашивать его
+// не о чем. Отложенная убрана из занятий сознательно. А та, про которую
+// сказали «уже знаю», не нуждается в повторении по определению.
+func (s State) InRepetition() bool {
+	return s == StateLearning || s == StateReview || s == StateRelearning
+}

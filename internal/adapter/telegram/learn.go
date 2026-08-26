@@ -11,7 +11,6 @@ import (
 
 	"lexi-bot/internal/domain/lexicon"
 	"lexi-bot/internal/domain/study"
-	"lexi-bot/internal/usecase/courses"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
 )
@@ -39,14 +38,14 @@ type typingState struct {
 	MessageID int    `json:"message"`
 }
 
-// Learn — команда /learn и режимы проверки.
+// Learn — повторение слов, которые человек уже начал учить.
 //
-// Карточка живёт в одном сообщении, которое правится на месте: слово
-// с вариантами перевода → разбор ответа → следующая карточка. Занятие
-// из тридцати карточек иначе превращалось бы в сотню сообщений в чате.
+// Новых слов здесь нет: знакомство с ними — отдельное занятие (см. Intro),
+// и заходят в оба из меню. Карточка живёт в одном сообщении, которое правится
+// на месте: слово с вариантами перевода → разбор ответа → следующая карточка.
+// Занятие из тридцати карточек иначе превращалось бы в сотню сообщений в чате.
 type Learn struct {
 	session   *session.Service
-	courses   *courses.Service
 	messenger port.Messenger
 	catalog   port.Catalog
 	clock     port.Clock
@@ -54,12 +53,10 @@ type Learn struct {
 }
 
 // NewLearn создаёт хендлер учебной сессии.
-func NewLearn(service *session.Service, courseService *courses.Service, messenger port.Messenger, catalog port.Catalog, clock port.Clock, dialogs *Dialogs) (*Learn, error) {
+func NewLearn(service *session.Service, messenger port.Messenger, catalog port.Catalog, clock port.Clock, dialogs *Dialogs) (*Learn, error) {
 	switch {
 	case service == nil:
 		return nil, errors.New("сессии нужен сценарий")
-	case courseService == nil:
-		return nil, errors.New("сессии нужен сценарий курсов")
 	case messenger == nil:
 		return nil, errors.New("сессии нужен мессенджер")
 	case catalog == nil:
@@ -71,16 +68,17 @@ func NewLearn(service *session.Service, courseService *courses.Service, messenge
 	}
 
 	l := &Learn{
-		session: service, courses: courseService, messenger: messenger,
+		session: service, messenger: messenger,
 		catalog: catalog, clock: clock, dialogs: dialogs,
 	}
 	dialogs.Register(stateTyping, StepFunc(l.typed))
 	return l, nil
 }
 
-// Register привязывает команду и кнопки к роутеру.
+// Register привязывает кнопки к роутеру. Команды у повторения нет:
+// в него заходят из меню занятия.
 func (l *Learn) Register(router *Router) {
-	router.Command("learn", port.UpdateHandlerFunc(l.start))
+	router.CallbackAction(actionReview, port.UpdateHandlerFunc(l.start))
 	router.CallbackAction(actionNext, port.UpdateHandlerFunc(l.next))
 	router.CallbackAction(actionAnswer, port.UpdateHandlerFunc(l.answer))
 	router.CallbackAction(actionType, port.UpdateHandlerFunc(l.chooseTyping))
@@ -166,24 +164,13 @@ func (l *Learn) elapsed(shown string) time.Duration {
 	return elapsed
 }
 
-// start начинает занятие.
+// start начинает повторение по кнопке из меню.
 func (l *Learn) start(ctx context.Context, u *port.Update) error {
-	known, ok := UserFrom(ctx)
+	callback, ok := decodeCallback(u.Callback.Data)
 	if !ok {
-		return errors.New("/learn без пользователя")
+		return nil
 	}
-
-	// Какой курс учить — решает сценарий курсов: он знает и про выбор
-	// пользователя, и про то, что выбранный курс мог уехать на паузу.
-	course, ok, err := l.courses.Current(ctx, known.ID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		// Учить нечего: человек ещё не выбрал курс или поставил всё на паузу.
-		return Reply(l.messenger, "learn.no_course").Handle(ctx, u)
-	}
-	return l.continueOutsideDialog(ctx, u, course.ID, 0)
+	return l.continueOutsideDialog(ctx, u, study.CourseID(callback.ID), u.Callback.MessageID)
 }
 
 // next показывает следующую карточку после разбора предыдущей.
@@ -477,8 +464,15 @@ func (l *Learn) finish(ctx context.Context, u *port.Update, messageID port.Messa
 		}
 	}
 
-	// Кнопки убираем: занятие кончилось, нажимать нечего.
-	return l.render(ctx, u, messageID, text, nil)
+	// Кнопка одна — вернуться в меню: там видно, остались ли новые слова.
+	keyboard, err := NewKeyboard().Row(Button(
+		mustText(localizer, "menu.back"),
+		Callback{Action: actionMenu, ID: int64(courseID)},
+	)).Build()
+	if err != nil {
+		return err
+	}
+	return l.render(ctx, u, messageID, text, keyboard)
 }
 
 // summaryText собирает итог занятия.

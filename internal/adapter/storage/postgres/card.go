@@ -34,16 +34,19 @@ const cardColumns = `id, user_course_id, lexeme_id, state, due_at, interval_days
 //
 // Доупорядочивание по id делает выдачу устойчивой: у карточек, введённых
 // одной пачкой, due_at совпадает до микросекунды.
+const repetitionStates = `state IN ('learning', 'review', 'relearning')`
+
 const dueCardsQuery = "SELECT " + cardColumns + ` FROM cards
-	WHERE user_course_id = $1 AND state <> 'suspended' AND due_at <= $2
+	WHERE user_course_id = $1 AND ` + repetitionStates + ` AND due_at <= $2
 	ORDER BY due_at, id
 	LIMIT $3`
 
 // Due возвращает карточки, которым подошёл срок, по возрастанию due_at.
 //
 // Запрос написан под индекс cards_due_idx: те же колонки в том же порядке
-// и то же условие на состояние. Отложенные карточки в индекс не входят,
-// поэтому и в выдачу не попадают.
+// и то же условие на состояние. Карточки вне повторений — новые, отложенные
+// и те, про которые сказали «уже знаю», — в индекс не входят, поэтому
+// и в выдачу не попадают.
 func (r *CardRepo) Due(ctx context.Context, q port.DueQuery) ([]study.Card, error) {
 	const op = "получить карточки к повторению"
 
@@ -62,77 +65,167 @@ func (r *CardRepo) Due(ctx context.Context, q port.DueQuery) ([]study.Card, erro
 	return cards, nil
 }
 
-// IntroduceNew вводит в курс новые слова и увеличивает дневной счётчик.
+// CountDue считает карточки, которым подошёл срок.
+func (r *CardRepo) CountDue(ctx context.Context, courseID study.CourseID, now time.Time) (int, error) {
+	const query = `SELECT count(*) FROM cards
+		WHERE user_course_id = $1 AND ` + repetitionStates + ` AND due_at <= $2`
+
+	var count int
+	if err := r.db(ctx).QueryRow(ctx, query, int64(courseID), now).Scan(&count); err != nil {
+		return 0, wrap("посчитать карточки к повторению", err)
+	}
+	return count, nil
+}
+
+// newWordsQuery вынесен из метода по той же причине, что и dueCardsQuery:
+// тест плана проверяет тот самый запрос, а не его копию.
 //
-// Всё происходит в одной транзакции, и начинается она с блокировки строки
-// счётчика. Без этого два одновременных нажатия «учить» прочитали бы один
-// и тот же остаток лимита и ввели по полному лимиту каждое — пользователь
-// получил бы двойную порцию новых слов и вдвое большую нагрузку через день.
-func (r *CardRepo) IntroduceNew(ctx context.Context, q port.IntroduceQuery) ([]study.Card, error) {
-	const op = "ввести новые слова"
+// Слова берутся из колоды курса по возрастанию позиции — у встроенных колод
+// это порядок частотности, у личной порядок добавления. Годятся два случая:
+// карточки ещё нет и слово никто не видел, либо карточка есть в фазе new,
+// то есть слово отложили кнопкой «пропустить», и срок возврата уже прошёл.
+const newWordsQuery = `
+	SELECT di.lexeme_id
+	FROM user_courses uc
+	JOIN deck_items di ON di.deck_id = uc.deck_id
+	LEFT JOIN cards c ON c.user_course_id = uc.id AND c.lexeme_id = di.lexeme_id
+	WHERE uc.id = $1
+	  AND (c.id IS NULL OR (c.state = 'new' AND c.due_at <= $2))
+	ORDER BY di.position, di.lexeme_id
+	LIMIT $3`
+
+// NewWords возвращает слова, которые пора показать в знакомстве.
+func (r *CardRepo) NewWords(ctx context.Context, q port.NewWordQuery) ([]lexicon.LexemeID, error) {
+	const op = "получить новые слова"
 
 	if q.Limit <= 0 {
 		return nil, nil
 	}
 
-	var cards []study.Card
+	rows, err := r.db(ctx).Query(ctx, newWordsQuery, int64(q.CourseID), q.Now, q.Limit)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []lexicon.LexemeID
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, lexicon.LexemeID(id))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(op, err)
+	}
+	return out, nil
+}
+
+// StartLearning заводит карточку на шагах обучения и тратит место в дневном
+// лимите новых слов.
+//
+// Всё происходит в одной транзакции, и начинается она с блокировки строки
+// счётчика. Без этого два одновременных «запомнил» прочитали бы один и тот же
+// остаток лимита и потратили каждое по полному — человек получил бы двойную
+// порцию новых слов и вдвое большую нагрузку через день.
+func (r *CardRepo) StartLearning(ctx context.Context, q *port.StartLearningQuery) (study.Card, bool, error) {
+	const op = "начать учить слово"
+
+	if q.Limit <= 0 {
+		return study.Card{}, false, nil
+	}
+
+	var (
+		card     study.Card
+		accepted bool
+	)
 	err := r.inTx(ctx, func(tx queryer) error {
 		introduced, err := lockCounter(ctx, tx, q.CourseID, q.Day)
 		if err != nil {
 			return err
 		}
-
-		remaining := q.Limit - introduced
-		if remaining <= 0 {
+		if introduced >= q.Limit {
 			return nil
 		}
-		if q.Batch > 0 && q.Batch < remaining {
-			remaining = q.Batch
-		}
 
-		// Слова берутся из колоды курса по возрастанию позиции — у встроенных
-		// колод это порядок частотности, у личной порядок добавления.
-		const insert = `
-			WITH candidates AS (
-				SELECT di.lexeme_id
-				FROM user_courses uc
-				JOIN deck_items di ON di.deck_id = uc.deck_id
-				LEFT JOIN cards c ON c.user_course_id = uc.id AND c.lexeme_id = di.lexeme_id
-				WHERE uc.id = $1 AND c.id IS NULL
-				ORDER BY di.position, di.lexeme_id
-				LIMIT $2
-			)
-			INSERT INTO cards (user_course_id, lexeme_id, state, due_at, ease_factor, introduced_at)
-			SELECT $1, lexeme_id, 'new', $3, $4, $3
-			FROM candidates
+		// ON CONFLICT, а не INSERT: у отложенного слова карточка уже есть,
+		// и «запомнил» переводит её из ожидания знакомства в обучение.
+		const upsert = `
+			INSERT INTO cards (user_course_id, lexeme_id, state, due_at, interval_days,
+			                   ease_factor, repetitions, lapses, learn_step, introduced_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (user_course_id, lexeme_id) DO UPDATE
+			SET state = EXCLUDED.state, due_at = EXCLUDED.due_at,
+			    interval_days = EXCLUDED.interval_days, ease_factor = EXCLUDED.ease_factor,
+			    repetitions = EXCLUDED.repetitions, lapses = EXCLUDED.lapses,
+			    learn_step = EXCLUDED.learn_step, introduced_at = EXCLUDED.introduced_at
+			WHERE cards.state = 'new'
 			RETURNING ` + cardColumns
 
-		rows, err := tx.Query(ctx, insert, int64(q.CourseID), remaining, q.Now, study.DefaultEaseFactor)
-		if err != nil {
+		row := tx.QueryRow(ctx, upsert, int64(q.CourseID), int64(q.LexemeID),
+			q.State.State.String(), q.State.DueAt, q.State.IntervalDays, q.State.EaseFactor,
+			q.State.Repetitions, q.State.Lapses, q.State.LearnStep, q.Now)
+
+		if err := scanCard(row, &card); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Слово уже не новое: карточку успели завести с другого
+				// устройства, и второе «запомнил» ничего не меняет.
+				return nil
+			}
 			return wrap(op, err)
 		}
-		cards, err = collectCards(rows)
-		if err != nil {
-			return wrap(op, err)
-		}
-		if len(cards) == 0 {
-			return nil
-		}
+		accepted = true
 
 		const bump = `
 			UPDATE daily_counters
-			SET new_introduced = new_introduced + $3
+			SET new_introduced = new_introduced + 1
 			WHERE user_course_id = $1 AND day = $2`
 
-		if _, err := tx.Exec(ctx, bump, int64(q.CourseID), q.Day, len(cards)); err != nil {
+		if _, err := tx.Exec(ctx, bump, int64(q.CourseID), q.Day); err != nil {
 			return wrap("увеличить счётчик новых слов", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return study.Card{}, false, err
 	}
-	return cards, nil
+	return card, accepted, nil
+}
+
+// MarkKnown помечает слово выученным: повторять в нём нечего.
+func (r *CardRepo) MarkKnown(ctx context.Context, courseID study.CourseID, lexemeID lexicon.LexemeID, now time.Time) error {
+	return r.settleNew(ctx, "пометить слово выученным", courseID, lexemeID, study.StateKnown, now, now)
+}
+
+// PostponeNew убирает слово из знакомства до указанного момента.
+func (r *CardRepo) PostponeNew(ctx context.Context, courseID study.CourseID, lexemeID lexicon.LexemeID, now, until time.Time) error {
+	return r.settleNew(ctx, "отложить слово", courseID, lexemeID, study.StateNew, until, now)
+}
+
+// settleNew заводит или переводит карточку, которую человек ещё не начал
+// учить. Дневной лимит новых слов при этом не тратится: ни «уже знаю»,
+// ни «пропустить» ничего учить не начинают.
+//
+// Условие на фазу в ON CONFLICT защищает от гонки: если карточку успели
+// увести в обучение с другого устройства, запоздавшее «пропустить» не должно
+// отбрасывать её обратно.
+func (r *CardRepo) settleNew(ctx context.Context, op string, courseID study.CourseID,
+	lexemeID lexicon.LexemeID, state study.State, dueAt, introducedAt time.Time,
+) error {
+	const query = `
+		INSERT INTO cards (user_course_id, lexeme_id, state, due_at, ease_factor, introduced_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (user_course_id, lexeme_id) DO UPDATE
+		SET state = EXCLUDED.state, due_at = EXCLUDED.due_at
+		WHERE cards.state = 'new'`
+
+	_, err := r.db(ctx).Exec(ctx, query, int64(courseID), int64(lexemeID),
+		state.String(), dueAt, study.DefaultEaseFactor, introducedAt)
+	if err != nil {
+		return wrap(op, err)
+	}
+	return nil
 }
 
 // Apply записывает результат ответа: новое состояние карточки, строку

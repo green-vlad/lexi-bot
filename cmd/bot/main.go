@@ -31,6 +31,7 @@ import (
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
 	"lexi-bot/internal/usecase/courses"
+	"lexi-bot/internal/usecase/intro"
 	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
@@ -182,12 +183,16 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	if err != nil {
 		return nil, err
 	}
+	counters := storage.NewCounterRepo(pool)
+	settings := storage.NewSettingsRepo(pool)
+	lexemes := storage.NewLexemeRepo(pool)
+
 	learning, err := session.New(&session.Deps{
 		Cards:     cards,
-		Counters:  storage.NewCounterRepo(pool),
+		Counters:  counters,
 		Courses:   courseRepo,
-		Settings:  storage.NewSettingsRepo(pool),
-		Lexemes:   storage.NewLexemeRepo(pool),
+		Settings:  settings,
+		Lexemes:   lexemes,
 		Decks:     decks,
 		Clock:     clock,
 		Rand:      jitter,
@@ -198,14 +203,31 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
-	learn, err := telegram.NewLearn(learning, courseService, transport, catalog, clock, dialogs)
+	introduction, err := intro.New(&intro.Deps{
+		Cards:     cards,
+		Counters:  counters,
+		Courses:   courseRepo,
+		Settings:  settings,
+		Lexemes:   lexemes,
+		Clock:     clock,
+		Scheduler: scheduler,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO(T-032 … T-034): к учебной сессии добавятся выбор из четырёх
-	// вариантов, ввод текстом и сводка. Пока бот честно отвечает только
-	// на то, что умеет, и /help перечисляет ровно это.
+	menu, err := telegram.NewMenu(learning, introduction, courseService, transport)
+	if err != nil {
+		return nil, err
+	}
+	learn, err := telegram.NewLearn(learning, transport, catalog, clock, dialogs)
+	if err != nil {
+		return nil, err
+	}
+	introHandler, err := telegram.NewIntro(introduction, transport, menu)
+	if err != nil {
+		return nil, err
+	}
 	decksHandler, err := telegram.NewDecks(courseService, transport)
 	if err != nil {
 		return nil, err
@@ -213,7 +235,9 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 
 	start.Register(r)
 	language.Register(r)
+	menu.Register(r)
 	learn.Register(r)
+	introHandler.Register(r)
 	decksHandler.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))

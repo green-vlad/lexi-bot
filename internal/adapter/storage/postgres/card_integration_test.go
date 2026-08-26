@@ -83,109 +83,176 @@ func counters(t *testing.T, pool *pgxpool.Pool, courseID study.CourseID) (newInt
 	return newIntroduced, reviewsDone
 }
 
-func TestIntroduceNewRespectsDeckOrder(t *testing.T) {
+// start заводит карточки для первых n слов колоды — так же, как это делает
+// кнопка «запомнил» на знакомстве.
+func start(t *testing.T, repo *postgres.CardRepo, courseID study.CourseID, lexemes []lexicon.Lexeme, n int) []study.Card {
+	t.Helper()
+
+	ctx := context.Background()
+	cards := make([]study.Card, 0, n)
+	for i := 0; i < n; i++ {
+		card, accepted, err := repo.StartLearning(ctx, &port.StartLearningQuery{
+			CourseID: courseID,
+			LexemeID: lexemes[i].ID,
+			// Как и на знакомстве: «запомнил» уводит слово на первый шаг
+			// обучения, а не оставляет его новым.
+			State: study.CardState{
+				State: study.StateLearning, DueAt: testNow, EaseFactor: study.DefaultEaseFactor,
+			},
+			Now: testNow, Day: testDay, Limit: n,
+		})
+		if err != nil {
+			t.Fatalf("StartLearning() вернул ошибку: %v", err)
+		}
+		if !accepted {
+			t.Fatalf("слово %d не заведено, хотя норма не выбрана", i)
+		}
+		cards = append(cards, card)
+	}
+	return cards
+}
+
+func TestNewWordsFollowDeckOrder(t *testing.T) {
 	pool := pgtest.New(t)
 	ctx := context.Background()
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 5)
 
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 3,
-	})
+	ids, err := repo.NewWords(ctx, port.NewWordQuery{CourseID: f.course.ID, Now: testNow, Limit: 3})
 	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
+		t.Fatalf("NewWords() вернул ошибку: %v", err)
 	}
-	if len(cards) != 3 {
-		t.Fatalf("введено %d слов, ожидалось три", len(cards))
+	if len(ids) != 3 {
+		t.Fatalf("выдано %d слов, ожидалось три", len(ids))
 	}
 
 	// Слова берутся по порядку колоды — у встроенной это частотность.
-	for i, card := range cards {
-		if card.LexemeID != f.lexemes[i].ID {
-			t.Errorf("позиция %d: слово %d, ожидалось %d", i, card.LexemeID, f.lexemes[i].ID)
-		}
-		if card.State != study.StateNew {
-			t.Errorf("позиция %d: фаза %v, ожидалась new", i, card.State)
-		}
-		if !card.DueAt.Equal(testNow) {
-			t.Errorf("позиция %d: DueAt = %v, новую карточку показываем сразу", i, card.DueAt)
-		}
-		if card.EaseFactor != study.DefaultEaseFactor {
-			t.Errorf("позиция %d: EaseFactor = %v", i, card.EaseFactor)
-		}
-		if err := card.Validate(); err != nil {
-			t.Errorf("позиция %d: карточка не проходит валидацию: %v", i, err)
+	for i, id := range ids {
+		if id != f.lexemes[i].ID {
+			t.Errorf("позиция %d: слово %d, ожидалось %d", i, id, f.lexemes[i].ID)
 		}
 	}
 
-	if introduced, _ := counters(t, pool, f.course.ID); introduced != 3 {
-		t.Errorf("счётчик новых = %d, ожидалось три", introduced)
+	// Начатое слово из знакомства уходит.
+	start(t, repo, f.course.ID, f.lexemes, 1)
+	ids, err = repo.NewWords(ctx, port.NewWordQuery{CourseID: f.course.ID, Now: testNow, Limit: 10})
+	if err != nil {
+		t.Fatalf("NewWords() вернул ошибку: %v", err)
+	}
+	if len(ids) != 4 || ids[0] != f.lexemes[1].ID {
+		t.Errorf("слова = %v, ожидались оставшиеся четыре начиная со второго", ids)
 	}
 }
 
-func TestIntroduceNewHonoursDailyLimit(t *testing.T) {
+func TestNewWordsReturnPostponedWhenTimeComes(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewCardRepo(pool)
+
+	f := newCourse(t, pool, 3)
+	tomorrow := testNow.AddDate(0, 0, 1)
+
+	if err := repo.PostponeNew(ctx, f.course.ID, f.lexemes[0].ID, testNow, tomorrow); err != nil {
+		t.Fatalf("PostponeNew() вернул ошибку: %v", err)
+	}
+
+	// Сегодня пропущенного слова в знакомстве нет.
+	ids, err := repo.NewWords(ctx, port.NewWordQuery{CourseID: f.course.ID, Now: testNow, Limit: 10})
+	if err != nil {
+		t.Fatalf("NewWords() вернул ошибку: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != f.lexemes[1].ID {
+		t.Errorf("слова = %v, ожидались два без пропущенного", ids)
+	}
+
+	// А завтра оно возвращается: пропуск означает «не сейчас».
+	ids, err = repo.NewWords(ctx, port.NewWordQuery{CourseID: f.course.ID, Now: tomorrow, Limit: 10})
+	if err != nil {
+		t.Fatalf("NewWords() вернул ошибку: %v", err)
+	}
+	if len(ids) != 3 || ids[0] != f.lexemes[0].ID {
+		t.Errorf("слова = %v, ожидались все три начиная с пропущенного", ids)
+	}
+}
+
+func TestMarkKnownRemovesWordFromEverything(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewCardRepo(pool)
+
+	f := newCourse(t, pool, 3)
+
+	if err := repo.MarkKnown(ctx, f.course.ID, f.lexemes[0].ID, testNow); err != nil {
+		t.Fatalf("MarkKnown() вернул ошибку: %v", err)
+	}
+
+	ids, err := repo.NewWords(ctx, port.NewWordQuery{CourseID: f.course.ID, Now: testNow, Limit: 10})
+	if err != nil {
+		t.Fatalf("NewWords() вернул ошибку: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Errorf("слова = %v: знакомое слово должно было уйти из знакомства", ids)
+	}
+
+	// И в повторения оно не попадёт даже через месяц.
+	due, err := repo.CountDue(ctx, f.course.ID, testNow.AddDate(0, 0, 30))
+	if err != nil {
+		t.Fatalf("CountDue() вернул ошибку: %v", err)
+	}
+	if due != 0 {
+		t.Errorf("к повторению %d карточек, ожидался ноль", due)
+	}
+
+	// Дневная норма не тронута: человек ничего не начинал учить.
+	var introduced int
+	err = pool.QueryRow(ctx, "SELECT coalesce(sum(new_introduced), 0) FROM daily_counters WHERE user_course_id = $1",
+		int64(f.course.ID)).Scan(&introduced)
+	if err != nil {
+		t.Fatalf("чтение счётчика не прошло: %v", err)
+	}
+	if introduced != 0 {
+		t.Errorf("счётчик новых = %d, ожидался ноль", introduced)
+	}
+}
+
+func TestStartLearningHonoursDailyQuota(t *testing.T) {
 	pool := pgtest.New(t)
 	ctx := context.Background()
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 8)
-	query := port.IntroduceQuery{CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 3}
+	start(t, repo, f.course.ID, f.lexemes, 3)
 
-	if _, err := repo.IntroduceNew(ctx, query); err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-
-	// Лимит на сутки уже выбран: второй заход не даёт ничего, хотя слова
+	// Норма на сутки выбрана: следующее «запомнил» не проходит, хотя слова
 	// в колоде остались.
-	more, err := repo.IntroduceNew(ctx, query)
-	if err != nil {
-		t.Fatalf("повторный IntroduceNew() вернул ошибку: %v", err)
-	}
-	if len(more) != 0 {
-		t.Errorf("введено ещё %d слов, ожидался ноль: дневной лимит выбран", len(more))
-	}
-
-	// Назавтра лимит начинается заново — счётчик привязан к дате.
-	tomorrow := testDay.AddDate(0, 0, 1)
-	next, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow.AddDate(0, 0, 1), Day: tomorrow, Limit: 3,
+	_, accepted, err := repo.StartLearning(ctx, &port.StartLearningQuery{
+		CourseID: f.course.ID, LexemeID: f.lexemes[3].ID,
+		State: study.CardState{State: study.StateLearning, DueAt: testNow, EaseFactor: study.DefaultEaseFactor},
+		Now:   testNow, Day: testDay, Limit: 3,
 	})
 	if err != nil {
-		t.Fatalf("IntroduceNew() на следующий день вернул ошибку: %v", err)
+		t.Fatalf("StartLearning() вернул ошибку: %v", err)
 	}
-	if len(next) != 3 {
-		t.Errorf("назавтра введено %d слов, ожидалось три", len(next))
+	if accepted {
+		t.Error("дневная норма выбрана, а слово всё равно заведено")
 	}
-	if next[0].LexemeID != f.lexemes[3].ID {
-		t.Errorf("назавтра выданы слова с начала колоды: %d", next[0].LexemeID)
+
+	// Назавтра норма начинается заново — счётчик привязан к дате.
+	_, accepted, err = repo.StartLearning(ctx, &port.StartLearningQuery{
+		CourseID: f.course.ID, LexemeID: f.lexemes[3].ID,
+		State: study.CardState{State: study.StateLearning, DueAt: testNow, EaseFactor: study.DefaultEaseFactor},
+		Now:   testNow.AddDate(0, 0, 1), Day: testDay.AddDate(0, 0, 1), Limit: 3,
+	})
+	if err != nil {
+		t.Fatalf("StartLearning() на следующий день вернул ошибку: %v", err)
+	}
+	if !accepted {
+		t.Error("назавтра норма должна была начаться заново")
 	}
 }
 
-func TestIntroduceNewStopsWhenDeckIsExhausted(t *testing.T) {
-	pool := pgtest.New(t)
-	ctx := context.Background()
-	repo := postgres.NewCardRepo(pool)
-
-	f := newCourse(t, pool, 2)
-
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 10,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-	if len(cards) != 2 {
-		t.Fatalf("введено %d слов, ожидалось два: в колоде больше нет", len(cards))
-	}
-
-	// Счётчик увеличился ровно на введённое, а не на запрошенное.
-	if introduced, _ := counters(t, pool, f.course.ID); introduced != 2 {
-		t.Errorf("счётчик новых = %d, ожидалось два", introduced)
-	}
-}
-
-func TestIntroduceNewIsSafeUnderConcurrency(t *testing.T) {
+func TestStartLearningIsSafeUnderConcurrency(t *testing.T) {
 	pool := pgtest.New(t)
 	ctx := context.Background()
 	repo := postgres.NewCardRepo(pool)
@@ -193,21 +260,23 @@ func TestIntroduceNewIsSafeUnderConcurrency(t *testing.T) {
 	f := newCourse(t, pool, 10)
 	const limit = 4
 
-	// Два одновременных нажатия «учить» — самый обычный случай при
-	// двойном тапе по кнопке. Дневной лимит не должен пробиваться.
+	// Восемь одновременных «запомнил» при норме в четыре слова — то же,
+	// что двойной тап по кнопке, только злее. Норма не должна пробиваться.
 	var (
-		wg    sync.WaitGroup
-		mu    sync.Mutex
-		total int
-		errs  []error
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		accepted int
+		errs     []error
 	)
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
-			cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-				CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: limit,
+			_, ok, err := repo.StartLearning(ctx, &port.StartLearningQuery{
+				CourseID: f.course.ID, LexemeID: f.lexemes[i].ID,
+				State: study.CardState{State: study.StateLearning, DueAt: testNow, EaseFactor: study.DefaultEaseFactor},
+				Now:   testNow, Day: testDay, Limit: limit,
 			})
 
 			mu.Lock()
@@ -216,16 +285,18 @@ func TestIntroduceNewIsSafeUnderConcurrency(t *testing.T) {
 				errs = append(errs, err)
 				return
 			}
-			total += len(cards)
+			if ok {
+				accepted++
+			}
 		}()
 	}
 	wg.Wait()
 
 	for _, err := range errs {
-		t.Errorf("IntroduceNew() вернул ошибку: %v", err)
+		t.Errorf("StartLearning() вернул ошибку: %v", err)
 	}
-	if total != limit {
-		t.Errorf("введено %d слов, ожидалось ровно %d", total, limit)
+	if accepted != limit {
+		t.Errorf("заведено %d слов, ожидалось ровно %d", accepted, limit)
 	}
 
 	var cards int
@@ -247,12 +318,7 @@ func TestDueReturnsOnlyRipeCards(t *testing.T) {
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 4)
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 4,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
+	cards := start(t, repo, f.course.ID, f.lexemes, 4)
 
 	// Раскладываем карточки по срокам: просрочена, ровно сейчас, завтра,
 	// и одна отложена.
@@ -301,13 +367,7 @@ func TestApplyWritesEverythingAtOnce(t *testing.T) {
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 1)
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 1,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-	card := cards[0]
+	card := start(t, repo, f.course.ID, f.lexemes, 1)[0]
 
 	next := study.CardState{
 		State:        study.StateReview,
@@ -377,13 +437,7 @@ func TestApplyRejectsBrokenOutcome(t *testing.T) {
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 1)
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 1,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-	card := cards[0]
+	card := start(t, repo, f.course.ID, f.lexemes, 1)[0]
 
 	next := study.CardState{State: study.StateReview, DueAt: testNow, IntervalDays: 1, EaseFactor: 2.5}
 	review, err := study.NewReview(study.ReviewParams{
@@ -428,14 +482,9 @@ func TestCountsByState(t *testing.T) {
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 4)
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 4,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
+	cards := start(t, repo, f.course.ID, f.lexemes, 4)
 
-	for i, state := range []string{"review", "review", "learning"} {
+	for i, state := range []string{"review", "review", "learning", "known"} {
 		if _, err := pool.Exec(ctx, "UPDATE cards SET state = $2 WHERE id = $1", int64(cards[i].ID), state); err != nil {
 			t.Fatalf("обновление карточки не прошло: %v", err)
 		}
@@ -451,8 +500,8 @@ func TestCountsByState(t *testing.T) {
 	if counts[study.StateLearning] != 1 {
 		t.Errorf("в обучении %d, ожидалась одна", counts[study.StateLearning])
 	}
-	if counts[study.StateNew] != 1 {
-		t.Errorf("новых %d, ожидалась одна", counts[study.StateNew])
+	if counts[study.StateKnown] != 1 {
+		t.Errorf("знакомых %d, ожидалась одна", counts[study.StateKnown])
 	}
 	// Фазы без карточек в ответе не появляются: ноль и отсутствие для
 	// статистики одно и то же.
@@ -467,13 +516,7 @@ func TestApplyRejectsStaleVersion(t *testing.T) {
 	repo := postgres.NewCardRepo(pool)
 
 	f := newCourse(t, pool, 1)
-	cards, err := repo.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: f.course.ID, Now: testNow, Day: testDay, Limit: 1,
-	})
-	if err != nil {
-		t.Fatalf("IntroduceNew() вернул ошибку: %v", err)
-	}
-	card := cards[0]
+	card := start(t, repo, f.course.ID, f.lexemes, 1)[0]
 
 	outcome := func(at time.Time, expected time.Time) *port.ReviewOutcome {
 		t.Helper()
@@ -502,7 +545,7 @@ func TestApplyRejectsStaleVersion(t *testing.T) {
 
 	// Второе нажатие той же кнопки: версия та же, а карточка уже уехала.
 	// Условие по last_reviewed_at не даёт применить ответ дважды.
-	err = repo.Apply(ctx, outcome(testNow.Add(time.Second), time.Time{}))
+	err := repo.Apply(ctx, outcome(testNow.Add(time.Second), time.Time{}))
 	if !errors.Is(err, port.ErrConflict) {
 		t.Errorf("повторный Apply() = %v, ожидалась ErrConflict", err)
 	}

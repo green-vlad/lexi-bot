@@ -42,48 +42,91 @@ func (s *stubCards) Due(_ context.Context, q port.DueQuery) ([]study.Card, error
 	return due, nil
 }
 
-func (s *stubCards) IntroduceNew(_ context.Context, q port.IntroduceQuery) ([]study.Card, error) {
-	counter := s.counters.value(q.Day)
-	remaining := q.Limit - counter.NewIntroduced
-	if q.Batch > 0 && q.Batch < remaining {
-		remaining = q.Batch
-	}
-	if remaining <= 0 {
+// CountDue считает то же, что отдаёт Due: расхождение между числом в меню
+// и числом карточек в занятии — как раз то, что тест обязан ловить.
+func (s *stubCards) CountDue(ctx context.Context, courseID study.CourseID, now time.Time) (int, error) {
+	due, err := s.Due(ctx, port.DueQuery{CourseID: courseID, Now: now, Limit: len(s.cards) + 1})
+	return len(due), err
+}
+
+// NewWords отдаёт слова колоды в порядке пула: те, для которых карточки ещё
+// нет, и те, что отложены кнопкой «пропустить» до уже прошедшего момента.
+func (s *stubCards) NewWords(_ context.Context, q port.NewWordQuery) ([]lexicon.LexemeID, error) {
+	if q.Limit <= 0 {
 		return nil, nil
 	}
 
-	var introduced []study.Card
+	var out []lexicon.LexemeID
 	for _, lexemeID := range s.pool {
-		if len(introduced) >= remaining {
+		if len(out) >= q.Limit {
 			break
 		}
-		if s.hasCard(lexemeID) {
+		card, ok := s.byLexeme(lexemeID)
+		if ok && (card.State != study.StateNew || card.DueAt.After(q.Now)) {
 			continue
 		}
-
-		s.nextID++
-		card := study.Card{
-			ID:           s.nextID,
-			CourseID:     q.CourseID,
-			LexemeID:     lexemeID,
-			CardState:    study.NewCardState(q.Now),
-			IntroducedAt: q.Now,
-		}
-		s.cards = append(s.cards, card)
-		introduced = append(introduced, card)
+		out = append(out, lexemeID)
 	}
-
-	s.counters.addNew(q.Day, len(introduced))
-	return introduced, nil
+	return out, nil
 }
 
-func (s *stubCards) hasCard(lexemeID lexicon.LexemeID) bool {
+// StartLearning заводит карточку и тратит место в дневной норме. Заглушка,
+// которая молча соглашалась бы на любое число слов, сделала бы бессмысленным
+// тест про исчерпанную норму.
+func (s *stubCards) StartLearning(_ context.Context, q *port.StartLearningQuery) (study.Card, bool, error) {
+	if q.Limit <= 0 || s.counters.value(q.Day).NewIntroduced >= q.Limit {
+		return study.Card{}, false, nil
+	}
+
+	card := s.upsert(q.CourseID, q.LexemeID, q.State, q.Now)
+	s.counters.addNew(q.Day, 1)
+	return card, true, nil
+}
+
+func (s *stubCards) MarkKnown(_ context.Context, courseID study.CourseID, lexemeID lexicon.LexemeID, now time.Time) error {
+	s.upsert(courseID, lexemeID, study.CardState{
+		State: study.StateKnown, DueAt: now, EaseFactor: study.DefaultEaseFactor,
+	}, now)
+	return nil
+}
+
+func (s *stubCards) PostponeNew(_ context.Context, courseID study.CourseID, lexemeID lexicon.LexemeID, now, until time.Time) error {
+	s.upsert(courseID, lexemeID, study.CardState{
+		State: study.StateNew, DueAt: until, EaseFactor: study.DefaultEaseFactor,
+	}, now)
+	return nil
+}
+
+// upsert заводит карточку или переводит существующую в новое состояние.
+// Как и в базе, тронуть можно только карточку, которую ещё не начали учить.
+func (s *stubCards) upsert(courseID study.CourseID, lexemeID lexicon.LexemeID, state study.CardState, now time.Time) study.Card {
+	for i := range s.cards {
+		if s.cards[i].LexemeID != lexemeID || s.cards[i].CourseID != courseID {
+			continue
+		}
+		if s.cards[i].State == study.StateNew {
+			s.cards[i].CardState = state
+			s.cards[i].IntroducedAt = now
+		}
+		return s.cards[i]
+	}
+
+	s.nextID++
+	card := study.Card{
+		ID: s.nextID, CourseID: courseID, LexemeID: lexemeID,
+		CardState: state, IntroducedAt: now,
+	}
+	s.cards = append(s.cards, card)
+	return card
+}
+
+func (s *stubCards) byLexeme(lexemeID lexicon.LexemeID) (study.Card, bool) {
 	for i := range s.cards {
 		if s.cards[i].LexemeID == lexemeID {
-			return true
+			return s.cards[i], true
 		}
 	}
-	return false
+	return study.Card{}, false
 }
 
 func (s *stubCards) Apply(_ context.Context, outcome *port.ReviewOutcome) error {

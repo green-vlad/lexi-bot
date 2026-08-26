@@ -123,12 +123,13 @@ const (
 	ReasonPaused
 )
 
-// Next возвращает следующую карточку курса.
+// Next возвращает следующую карточку курса к повторению.
 //
-// Порядок выдачи задан сроком показа и потому получается сам собой:
-// просроченные повторения ждут дольше всех, за ними карточки на шагах
-// обучения, и только потом новые слова, которым срок ставится текущим
-// моментом.
+// Новых слов здесь нет: знакомство с ними — отдельное занятие (usecase/intro),
+// и спрашивать перевод слова, которого человек ещё не видел, сессия больше
+// не пытается. Порядок выдачи задан сроком показа и потому получается сам
+// собой: просроченные повторения ждут дольше всех, за ними карточки
+// на шагах обучения.
 func (s *Service) Next(ctx context.Context, courseID study.CourseID) (Item, Reason, error) {
 	course, err := s.deps.Courses.ByID(ctx, courseID)
 	if err != nil {
@@ -162,32 +163,50 @@ func (s *Service) Next(ctx context.Context, courseID study.CourseID) (Item, Reas
 	if err != nil {
 		return Item{}, ReasonNone, fmt.Errorf("получить карточки к повторению: %w", err)
 	}
-	if len(due) > 0 {
-		return s.prepare(ctx, &course, &settings, &due[0])
-	}
-
-	if counter.NewIntroduced >= settings.NewPerDay {
-		return Item{}, ReasonDailyLimit, nil
-	}
-
-	// Новое слово вводится по одному и ровно тогда, когда мы собираемся
-	// его показать: иначе человек, бросивший занятие после первой карточки,
-	// потратил бы весь дневной лимит на слова, которых не видел.
-	introduced, err := s.deps.Cards.IntroduceNew(ctx, port.IntroduceQuery{
-		CourseID: courseID,
-		Now:      now,
-		Day:      day,
-		Limit:    settings.NewPerDay,
-		Batch:    1,
-	})
-	if err != nil {
-		return Item{}, ReasonNone, fmt.Errorf("ввести новое слово: %w", err)
-	}
-	if len(introduced) == 0 {
-		// Лимит не выбран, но колода кончилась.
+	if len(due) == 0 {
 		return Item{}, ReasonCaughtUp, nil
 	}
-	return s.prepare(ctx, &course, &settings, &introduced[0])
+	return s.prepare(ctx, &course, &settings, &due[0])
+}
+
+// DueCount считает карточки, которые ждут повторения прямо сейчас.
+//
+// Дневной потолок повторений тут учтён: меню обещает число, и человек должен
+// получить именно столько, а не упереться в лимит на середине.
+func (s *Service) DueCount(ctx context.Context, courseID study.CourseID) (int, error) {
+	course, err := s.deps.Courses.ByID(ctx, courseID)
+	if err != nil {
+		return 0, fmt.Errorf("найти курс: %w", err)
+	}
+	if !course.IsActive() {
+		return 0, nil
+	}
+
+	settings, err := s.deps.Settings.Get(ctx, user.ID(course.UserID))
+	if err != nil {
+		return 0, fmt.Errorf("прочитать настройки: %w", err)
+	}
+
+	now := s.deps.Clock.Now()
+
+	counter, err := s.deps.Counters.Get(ctx, courseID, settings.DayStart(now))
+	if err != nil {
+		return 0, fmt.Errorf("прочитать дневные счётчики: %w", err)
+	}
+
+	left := settings.MaxReviewsPerDay - counter.ReviewsDone
+	if left <= 0 {
+		return 0, nil
+	}
+
+	due, err := s.deps.Cards.CountDue(ctx, courseID, now)
+	if err != nil {
+		return 0, fmt.Errorf("посчитать карточки к повторению: %w", err)
+	}
+	if due > left {
+		return left, nil
+	}
+	return due, nil
 }
 
 // Card возвращает уже показанную карточку, подготовленную заново.

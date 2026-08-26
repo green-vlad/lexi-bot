@@ -11,6 +11,7 @@ import (
 	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/usecase/courses"
+	"lexi-bot/internal/usecase/intro"
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
 )
@@ -65,7 +66,11 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 	for i := 0; i < words; i++ {
 		id := lexicon.LexemeID(i + 1)
 		pool = append(pool, id)
-		lexemes[id] = lexicon.Lexeme{ID: id, Lang: langKO, Term: terms[i], Reading: "чтение", POS: lexicon.POSNoun}
+		lexemes[id] = lexicon.Lexeme{
+			ID: id, Lang: langKO, Term: terms[i], Reading: "чтение",
+			// Пример употребления показывается на знакомстве.
+			Example: "пример", POS: lexicon.POSNoun,
+		}
 		translations[id] = []lexicon.Translation{{LexemeID: id, Lang: langRU, Text: meanings[i], IsPrimary: true}}
 	}
 	f.cards = newStubCards(pool, course.ID)
@@ -123,9 +128,30 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		t.Fatalf("courses.New() вернул ошибку: %v", err)
 	}
 
-	handler, err := telegram.NewLearn(service, courseService, f.messenger, testCatalog(t), clock, dialogs)
+	introduction, err := intro.New(&intro.Deps{
+		Cards:     f.cards,
+		Counters:  f.cards.counters,
+		Courses:   f.courses,
+		Settings:  f.settings,
+		Lexemes:   f.lexemes,
+		Clock:     clock,
+		Scheduler: scheduler,
+	})
+	if err != nil {
+		t.Fatalf("intro.New() вернул ошибку: %v", err)
+	}
+
+	menu, err := telegram.NewMenu(service, introduction, courseService, f.messenger)
+	if err != nil {
+		t.Fatalf("NewMenu() вернул ошибку: %v", err)
+	}
+	handler, err := telegram.NewLearn(service, f.messenger, testCatalog(t), clock, dialogs)
 	if err != nil {
 		t.Fatalf("NewLearn() вернул ошибку: %v", err)
+	}
+	introHandler, err := telegram.NewIntro(introduction, f.messenger, menu)
+	if err != nil {
+		t.Fatalf("NewIntro() вернул ошибку: %v", err)
 	}
 
 	f.router = telegram.NewRouter()
@@ -135,7 +161,9 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 		telegram.Localize(testCatalog(t)),
 		dialogs.Middleware(),
 	)
+	menu.Register(f.router)
 	handler.Register(f.router)
+	introHandler.Register(f.router)
 	// Посторонняя команда, на которой проверяется прерывание ожидания ввода.
 	f.router.Command("help", telegram.Reply(f.messenger, "help.text"))
 	return f
@@ -146,23 +174,43 @@ func newLearnFixture(t *testing.T, words int, modes ...study.Mode) *learnFixture
 func (f *learnFixture) seen(t *testing.T) {
 	t.Helper()
 
+	// Первое слово ждёт дольше всех: очередь идёт по сроку, и тесты
+	// рассчитывают на порядок из файла.
+	f.startedWords(t, len(f.cards.pool))
+}
+
+// startedWords делает знакомыми первые n слов пула: повторяются только те,
+// которые человек уже начал учить.
+func (f *learnFixture) startedWords(t *testing.T, n int) {
+	t.Helper()
+
 	for i, id := range f.cards.pool {
+		if i >= n {
+			return
+		}
 		f.cards.nextID++
 		f.cards.cards = append(f.cards.cards, study.Card{
 			ID:       f.cards.nextID,
 			CourseID: f.cards.courseID,
 			LexemeID: id,
 			CardState: study.CardState{
-				// Первое слово ждёт дольше всех: очередь идёт по сроку,
-				// и тесты рассчитывают на порядок из файла.
 				State:        study.StateReview,
-				DueAt:        f.now.Add(-time.Duration(len(f.cards.pool)-i) * time.Minute),
+				DueAt:        f.now.Add(-time.Duration(n-i) * time.Minute),
 				IntervalDays: 1, EaseFactor: 2.5, Repetitions: 2,
 			},
 			IntroducedAt:   f.now.AddDate(0, 0, -3),
 			LastReviewedAt: f.now.AddDate(0, 0, -1),
 		})
 	}
+}
+
+// quota меняет дневную норму новых слов.
+func (f *learnFixture) quota(t *testing.T, n int) {
+	t.Helper()
+
+	settings := f.settings.byUser[1]
+	settings.NewPerDay = n
+	f.settings.byUser[1] = settings
 }
 
 // reverse переключает курс на проверку в сторону изучаемого языка:
@@ -173,6 +221,35 @@ func (f *learnFixture) reverse(t *testing.T) {
 	settings := f.settings.byUser[1]
 	settings.ReverseDirection = true
 	f.settings.byUser[1] = settings
+}
+
+// review открывает меню и заходит в повторение. Занятие больше не начинается
+// командой: /learn показывает меню, а чем заняться, выбирает человек.
+func (f *learnFixture) review(t *testing.T) {
+	t.Helper()
+
+	f.enter(t, "rev:")
+}
+
+// words открывает меню и заходит в знакомство с новыми словами.
+func (f *learnFixture) words(t *testing.T) {
+	t.Helper()
+
+	f.enter(t, "new:")
+}
+
+func (f *learnFixture) enter(t *testing.T, action string) {
+	t.Helper()
+
+	f.send(t, "/learn")
+	_, buttons := f.screen(t)
+	for _, data := range buttons {
+		if strings.HasPrefix(data, action) {
+			f.press(t, data)
+			return
+		}
+	}
+	t.Fatalf("в меню нет кнопки %q: %v", action, buttons)
 }
 
 func (f *learnFixture) send(t *testing.T, text string) {
@@ -221,13 +298,15 @@ func TestLearnFinishesWhenNothingLeft(t *testing.T) {
 	// спрашивается вводом текста.
 	f := newLearnFixture(t, 1)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	f.send(t, "дом")
 
-	// Слов больше нет: занятие закончилось, кнопок не осталось.
+	// Слов больше нет: занятие закончилось, и осталась одна кнопка —
+	// вернуться в меню, где видно, есть ли новые слова.
 	text, buttons := f.screen(t)
-	if len(buttons) != 0 {
-		t.Errorf("после конца занятия остались кнопки: %v", buttons)
+	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "menu:") {
+		t.Errorf("кнопки после конца занятия = %v, ожидался возврат в меню", buttons)
 	}
 	if !strings.Contains(strings.ToLower(text), "сегодня") {
 		t.Errorf("сообщение о конце = %q", text)
@@ -270,7 +349,8 @@ func TestLearnIgnoresStaleButtons(t *testing.T) {
 
 	f := newLearnFixture(t, 4)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	_, buttons := f.screen(t)
 
 	var correct string
@@ -297,8 +377,14 @@ func TestLearnIgnoresStaleButtons(t *testing.T) {
 func TestLearnNeedsDependencies(t *testing.T) {
 	t.Parallel()
 
-	if _, err := telegram.NewLearn(nil, nil, nil, nil, nil, nil); err == nil {
-		t.Error("хендлер без зависимостей должен быть ошибкой")
+	if _, err := telegram.NewLearn(nil, nil, nil, nil, nil); err == nil {
+		t.Error("хендлер повторения без зависимостей должен быть ошибкой")
+	}
+	if _, err := telegram.NewMenu(nil, nil, nil, nil); err == nil {
+		t.Error("меню без зависимостей должно быть ошибкой")
+	}
+	if _, err := telegram.NewIntro(nil, nil, nil); err == nil {
+		t.Error("знакомство без зависимостей должно быть ошибкой")
 	}
 }
 
@@ -307,7 +393,8 @@ func TestLearnChoiceMode(t *testing.T) {
 
 	f := newLearnFixture(t, 4, study.ModeChoice)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 
 	text, buttons := f.screen(t)
 	if !strings.Contains(text, "집") {
@@ -345,7 +432,8 @@ func TestLearnChoiceExplainsMiss(t *testing.T) {
 
 	f := newLearnFixture(t, 4, study.ModeChoice)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	_, buttons := f.screen(t)
 
 	// Промах: показываем верный перевод и ждём нажатия «дальше».
@@ -371,12 +459,13 @@ func TestLearnChoiceExplainsMiss(t *testing.T) {
 		t.Errorf("после «дальше» %q, ожидалось следующее слово", text)
 	}
 
-	// Промах записан провалом: карточка вернётся скоро.
+	// Промах записан провалом: выученная карточка ушла в переобучение
+	// и вернётся скоро.
 	card, err := f.cards.ByID(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("ByID() вернул ошибку: %v", err)
 	}
-	if card.State != study.StateLearning || card.LearnStep != 0 {
+	if card.State != study.StateRelearning || card.Lapses != 1 {
 		t.Errorf("состояние после промаха = %+v", card.CardState)
 	}
 }
@@ -388,7 +477,8 @@ func TestLearnChoiceFallsBackWhenDeckIsTiny(t *testing.T) {
 	// кнопки был бы издевательством. Остаётся ввод текстом.
 	f := newLearnFixture(t, 1, study.ModeChoice)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 
 	text, buttons := f.screen(t)
 	if len(buttons) != 0 {
@@ -404,7 +494,8 @@ func TestLearnChoiceCountsSpeed(t *testing.T) {
 
 	f := newLearnFixture(t, 4, study.ModeChoice)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	_, buttons := f.screen(t)
 
 	var correct string
@@ -422,10 +513,13 @@ func TestLearnChoiceCountsSpeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ByID() вернул ошибку: %v", err)
 	}
-	// «Легко» у новой карточки отправило бы её сразу на четыре дня;
-	// «хорошо» оставляет на шагах обучения.
-	if card.State != study.StateLearning {
-		t.Errorf("состояние = %v, ожидалось обучение: ответ не был быстрым", card.State)
+	// «Легко» умножило бы интервал на бонус сверх коэффициента лёгкости;
+	// «хорошо» просто двигает карточку на обычный следующий срок.
+	if card.State != study.StateReview {
+		t.Fatalf("состояние = %v, ожидалось повторение", card.State)
+	}
+	if card.IntervalDays > 3 {
+		t.Errorf("интервал = %v суток: ответ не был быстрым, «легко» он не заслужил", card.IntervalDays)
 	}
 }
 
@@ -437,7 +531,8 @@ func TestLearnOffersTypingBesideOptions(t *testing.T) {
 	f := newLearnFixture(t, 4)
 	f.reverse(t)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	text, buttons := f.screen(t)
 	if !strings.Contains(text, "дом") {
 		t.Errorf("на карточке %q, ожидался перевод", text)
@@ -478,7 +573,8 @@ func TestLearnHidesTypingTowardsNativeLanguage(t *testing.T) {
 	// несколько равноправных значений. Печатать его мы не предлагаем.
 	f := newLearnFixture(t, 4)
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	_, buttons := f.screen(t)
 	if len(buttons) != 4 {
 		t.Fatalf("кнопок %d, ожидались только четыре варианта: %v", len(buttons), buttons)
@@ -497,7 +593,7 @@ func TestLearnTypingCorrectAnswer(t *testing.T) {
 	f.reverse(t)
 	f.seen(t)
 
-	f.send(t, "/learn")
+	f.review(t)
 	text, buttons := f.screen(t)
 	if len(buttons) != 0 {
 		t.Errorf("в режиме ввода кнопок быть не должно: %v", buttons)
@@ -546,7 +642,7 @@ func TestLearnTypingTypoShowsSpelling(t *testing.T) {
 	long.Term = "초등학생"
 	f.lexemes.lexemes[1] = long
 
-	f.send(t, "/learn")
+	f.review(t)
 
 	// Опечатка в один символ засчитывается, но человек должен увидеть,
 	// как пишется правильно, — иначе он выучит свою опечатку.
@@ -579,7 +675,7 @@ func TestLearnTypingWrongAnswer(t *testing.T) {
 	f.reverse(t)
 	f.seen(t)
 
-	f.send(t, "/learn")
+	f.review(t)
 	f.send(t, "совсем не то")
 
 	text, buttons := f.screen(t)
@@ -611,7 +707,7 @@ func TestLearnTypingIgnoresCommands(t *testing.T) {
 	f.reverse(t)
 	f.seen(t)
 
-	f.send(t, "/learn")
+	f.review(t)
 	if _, ok := f.sessions.current(t); !ok {
 		t.Fatal("ожидание ответа не началось")
 	}
@@ -640,7 +736,7 @@ func TestLearnTypingWaitsForRealAnswer(t *testing.T) {
 	f.reverse(t)
 	f.seen(t)
 
-	f.send(t, "/learn")
+	f.review(t)
 	f.send(t, "   ")
 
 	// Пустое сообщение ответом не считается: продолжаем ждать.
@@ -666,7 +762,8 @@ func TestLearnShowsSummary(t *testing.T) {
 	f := newLearnFixture(t, 2)
 	f.reviews.total, f.reviews.correct = 2, 1
 
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	// Верный ответ ведёт к следующему слову сам.
 	f.send(t, "дом")
 	// А промах ждёт нажатия «дальше».
@@ -680,14 +777,16 @@ func TestLearnShowsSummary(t *testing.T) {
 
 	// Слова кончились — показан итог.
 	text, buttons := f.screen(t)
-	if len(buttons) != 0 {
-		t.Errorf("в итоге остались кнопки: %v", buttons)
+	if len(buttons) != 1 || !strings.HasPrefix(buttons[0], "menu:") {
+		t.Errorf("кнопки итога = %v, ожидался возврат в меню", buttons)
 	}
 	if !strings.Contains(text, "2 карточки") {
 		t.Errorf("итог = %q, ожидалось число повторённых", text)
 	}
-	if !strings.Contains(text, "2 новых") {
-		t.Errorf("итог = %q, ожидалось число новых слов", text)
+	// Новых слов в повторении нет: их вводит знакомство, и счётчик
+	// дневной нормы это занятие не трогало.
+	if strings.Contains(text, "новых") {
+		t.Errorf("итог = %q: повторение не вводит новых слов", text)
 	}
 	if !strings.Contains(text, "50%") {
 		t.Errorf("итог = %q, ожидалась точность 50%%", text)
@@ -704,7 +803,8 @@ func TestLearnSummaryWithoutAnswers(t *testing.T) {
 
 	// Отвечаем на единственную карточку, чтобы дневной лимит кончился
 	// не сразу, а колода — да.
-	f.send(t, "/learn")
+	f.seen(t)
+	f.review(t)
 	f.send(t, "дом")
 
 	text, _ := f.screen(t)

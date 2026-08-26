@@ -87,8 +87,13 @@ func TestCardStateIsDue(t *testing.T) {
 		{"срок прошёл", study.StateReview, now.Add(-time.Hour), true},
 		{"срок ровно сейчас", study.StateReview, now, true},
 		{"срок ещё не наступил", study.StateReview, now.Add(time.Minute), false},
-		{"новая карточка со сроком сейчас", study.StateNew, now, true},
+		{"на шагах обучения", study.StateLearning, now, true},
+		{"забытая карточка", study.StateRelearning, now, true},
+		// Новая карточка ждёт знакомства, а не повторения: её due_at
+		// означает готовность слова к показу, а не подошедший срок.
+		{"новая карточка со сроком сейчас", study.StateNew, now, false},
 		{"отложенная карточка не выдаётся", study.StateSuspended, now.Add(-24 * time.Hour), false},
+		{"слово, которое человек уже знает", study.StateKnown, now.Add(-24 * time.Hour), false},
 	}
 
 	for _, tt := range tests {
@@ -139,8 +144,8 @@ func TestNewCard(t *testing.T) {
 	if !card.IsNew() {
 		t.Error("только что созданная карточка ещё ни разу не показывалась")
 	}
-	if !card.IsDue(now) {
-		t.Error("новая карточка должна быть готова к показу сразу")
+	if card.IsDue(now) {
+		t.Error("новая карточка ждёт знакомства, а не повторения")
 	}
 	if card.State != study.StateNew {
 		t.Errorf("State = %v, ожидалось new", card.State)

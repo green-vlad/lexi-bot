@@ -86,9 +86,13 @@ func (s CardState) Validate() error {
 	return nil
 }
 
-// IsDue сообщает, что карточку пора показать: срок наступил и она не отложена.
+// IsDue сообщает, что карточку пора повторить: срок наступил, и она в той
+// фазе, где повторения вообще бывают.
+//
+// Новая карточка сюда не попадает, хотя её due_at обычно уже прошёл: у неё
+// этот момент означает не срок повторения, а готовность слова к знакомству.
 func (s CardState) IsDue(now time.Time) bool {
-	if s.State == StateSuspended {
+	if !s.State.InRepetition() {
 		return false
 	}
 	return !s.DueAt.After(now)

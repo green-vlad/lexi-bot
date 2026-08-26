@@ -890,3 +890,9 @@ func TestChoiceOptionsMatchDirection(t *testing.T) {
 		}
 	}
 }
+
+// Contains сообщает, есть ли слово в колоде. Личный словарь заглушке
+// не нужен: она обслуживает сценарии, которые своих слов не заводят.
+func (*fakeDecks) Contains(context.Context, lexicon.DeckID, lexicon.LexemeID) (bool, error) {
+	return false, nil
+}

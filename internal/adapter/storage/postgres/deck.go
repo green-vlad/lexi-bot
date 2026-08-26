@@ -328,6 +328,17 @@ func (r *DeckRepo) AddItems(ctx context.Context, items []lexicon.DeckItem) error
 	})
 }
 
+// Contains сообщает, есть ли слово в колоде.
+func (r *DeckRepo) Contains(ctx context.Context, deckID lexicon.DeckID, lexemeID lexicon.LexemeID) (bool, error) {
+	const query = `SELECT EXISTS (SELECT 1 FROM deck_items WHERE deck_id = $1 AND lexeme_id = $2)`
+
+	var exists bool
+	if err := r.db(ctx).QueryRow(ctx, query, int64(deckID), int64(lexemeID)).Scan(&exists); err != nil {
+		return false, wrap("проверить состав колоды", err)
+	}
+	return exists, nil
+}
+
 // Items возвращает состав колоды по возрастанию position — в этом порядке
 // слова и вводятся в курс. Нулевой limit означает «без ограничения».
 func (r *DeckRepo) Items(ctx context.Context, deckID lexicon.DeckID, offset, limit int) ([]lexicon.DeckItem, error) {

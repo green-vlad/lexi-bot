@@ -104,6 +104,11 @@ type DeckRepo interface {
 	// AddItems добавляет слова в колоду.
 	AddItems(ctx context.Context, items []lexicon.DeckItem) error
 
+	// Contains сообщает, есть ли слово в колоде. Нужен при добавлении
+	// своего слова: если оно уже лежит в колоде, которую человек учит,
+	// заводить копию незачем.
+	Contains(ctx context.Context, deckID lexicon.DeckID, lexemeID lexicon.LexemeID) (bool, error)
+
 	// Items возвращает состав колоды по возрастанию position — в этом
 	// порядке слова и вводятся в курс.
 	Items(ctx context.Context, deckID lexicon.DeckID, offset, limit int) ([]lexicon.DeckItem, error)

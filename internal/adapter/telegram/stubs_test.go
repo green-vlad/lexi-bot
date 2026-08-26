@@ -348,3 +348,9 @@ func (s *stubReviews) Stats(context.Context, port.StatsQuery) (port.ReviewStats,
 func (s *stubReviews) ActiveDays(context.Context, user.ID, user.Timezone, time.Time) ([]time.Time, error) {
 	return nil, nil
 }
+
+// Contains сообщает, есть ли слово в колоде. Личный словарь заглушке
+// не нужен: она обслуживает сценарии, которые своих слов не заводят.
+func (*stubDeckSource) Contains(context.Context, lexicon.DeckID, lexicon.LexemeID) (bool, error) {
+	return false, nil
+}

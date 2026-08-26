@@ -581,3 +581,9 @@ func (s *stubSettings) Save(_ context.Context, userID user.ID, settings user.Set
 	s.byUser[userID] = settings
 	return nil
 }
+
+// Contains сообщает, есть ли слово в колоде. Личный словарь заглушке
+// не нужен: она обслуживает сценарии, которые своих слов не заводят.
+func (*stubDecks) Contains(context.Context, lexicon.DeckID, lexicon.LexemeID) (bool, error) {
+	return false, nil
+}

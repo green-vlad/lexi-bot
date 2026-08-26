@@ -427,3 +427,37 @@ func TestDeckDistractors(t *testing.T) {
 		t.Errorf("из пустой колоды получено %d вариантов", len(empty))
 	}
 }
+
+func TestDeckContains(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewDeckRepo(pool)
+
+	deck := builtinDeck(t, pool, "ko-contains", langKO)
+	lexemes := saveLexemes(t, pool, newLexeme(t, "냉장고"), newLexeme(t, "옷장"))
+
+	if err := repo.AddItems(ctx, []lexicon.DeckItem{
+		{DeckID: deck, LexemeID: lexemes[0].ID, Position: 0},
+	}); err != nil {
+		t.Fatalf("AddItems() вернул ошибку: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		lexeme lexicon.LexemeID
+		want   bool
+	}{
+		{"слово в колоде", lexemes[0].ID, true},
+		{"слово мимо колоды", lexemes[1].ID, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := repo.Contains(ctx, deck, tt.lexeme)
+			if err != nil {
+				t.Fatalf("Contains() вернул ошибку: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Contains() = %t, ожидалось %t", got, tt.want)
+			}
+		})
+	}
+}

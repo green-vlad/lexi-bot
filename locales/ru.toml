@@ -22,7 +22,7 @@ other = "Привет, {{.Name}}! Я помогу выучить слова — 
 other = "Выберите язык интерфейса."
 
 [help.text]
-other = "Вот что я умею:\n\n/learn — заниматься: повторить слова или взять новые\n/decks — мои курсы\n/add — добавить своё слово\n/import — загрузить словарь из CSV\n/start — начать заново\n/language — язык интерфейса\n/cancel — прервать диалог\n/help — эта справка\n\nОстальное (свои слова, статистика, напоминания) появится в ближайших обновлениях."
+other = "Вот что я умею:\n\n/learn — заниматься: повторить слова или взять новые\n/decks — мои курсы\n/add — добавить своё слово\n/import — загрузить словарь из CSV\n/settings — настройки\n/start — начать заново\n/language — язык интерфейса\n/cancel — прервать диалог\n/help — эта справка\n\nСтатистика и напоминания появятся в ближайших обновлениях."
 
 [language.changed]
 other = "Язык интерфейса переключён на русский."
@@ -43,13 +43,6 @@ other = "Сегодня добавлено {{.Count}} новых слова"
 
 [session.finished]
 other = "На сегодня всё. Следующее повторение — {{.NextAt}}."
-
-[settings.new_per_day]
-description = "Текущий дневной лимит новых слов"
-one = "Сейчас {{.Count}} новое слово в день"
-few = "Сейчас {{.Count}} новых слова в день"
-many = "Сейчас {{.Count}} новых слов в день"
-other = "Сейчас {{.Count}} новых слова в день"
 
 [lang.ru]
 other = "Русский"
@@ -350,3 +343,83 @@ other = "строка"
 
 [import.report_reason]
 other = "причина"
+
+[settings.title]
+other = "Настройки. Нажмите на строку, чтобы изменить."
+
+[settings.new_per_day]
+description = "Дневная норма новых слов"
+one = "Новых слов в день: {{.Count}}"
+few = "Новых слов в день: {{.Count}}"
+many = "Новых слов в день: {{.Count}}"
+other = "Новых слов в день: {{.Count}}"
+
+[settings.review_cap]
+description = "Потолок повторений в день"
+one = "Повторений в день, не больше: {{.Count}}"
+few = "Повторений в день, не больше: {{.Count}}"
+many = "Повторений в день, не больше: {{.Count}}"
+other = "Повторений в день, не больше: {{.Count}}"
+
+[settings.modes]
+other = "Как спрашивать: {{.Modes}}"
+
+[settings.direction]
+other = "Направление: {{.Direction}}"
+
+[settings.reminder]
+other = "Напоминание: {{.Time}}"
+
+[settings.timezone]
+other = "Таймзона: {{.Timezone}}"
+
+[settings.ask_new_per_day]
+other = "Сколько новых слов в день? Изменение вступит в силу завтра — сегодняшняя норма уже отсчитана."
+
+[settings.ask_review_cap]
+other = "Сколько повторений в день, не больше?"
+
+[settings.ask_modes]
+other = "Как спрашивать слова? Хотя бы один способ должен остаться включённым."
+
+[settings.ask_direction]
+other = "В какую сторону спрашивать?"
+
+[settings.ask_reminder]
+other = "Когда напоминать о занятии?"
+
+[settings.type_new_per_day]
+other = "Напишите число от 1 до 100."
+
+[settings.type_reminder]
+other = "Напишите время в виде «21:30»."
+
+[settings.type_timezone]
+other = "Напишите таймзону в виде «Asia/Seoul» или «Europe/Moscow»."
+
+[settings.mode_choice]
+other = "выбор из вариантов"
+
+[settings.mode_typing]
+other = "ввод текстом"
+
+[settings.direction_recognize]
+other = "слово → перевод"
+
+[settings.direction_produce]
+other = "перевод → слово"
+
+[settings.reminder_off]
+other = "выключено"
+
+[settings.custom]
+other = "Другое значение"
+
+[settings.back]
+other = "← К настройкам"
+
+[settings.last_mode]
+other = "Это единственный оставшийся способ проверки — выключить его нельзя, иначе карточку станет нечем показать."
+
+[settings.bad_value]
+other = "Такое значение не подходит. Попробуйте ещё раз."

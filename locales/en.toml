@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe rest (your own words, statistics, reminders) is coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/settings — settings\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nStatistics and reminders are coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -39,11 +39,6 @@ other = "{{.Count}} new words added today"
 
 [session.finished]
 other = "That's all for today. Next review — {{.NextAt}}."
-
-[settings.new_per_day]
-description = "Current daily limit of new words"
-one = "Currently {{.Count}} new word per day"
-other = "Currently {{.Count}} new words per day"
 
 [lang.ru]
 other = "Russian"
@@ -324,3 +319,79 @@ other = "line"
 
 [import.report_reason]
 other = "reason"
+
+[settings.title]
+other = "Settings. Tap a line to change it."
+
+[settings.new_per_day]
+description = "Daily quota of new words"
+one = "New words a day: {{.Count}}"
+other = "New words a day: {{.Count}}"
+
+[settings.review_cap]
+description = "Daily cap on reviews"
+one = "Reviews a day, at most: {{.Count}}"
+other = "Reviews a day, at most: {{.Count}}"
+
+[settings.modes]
+other = "How to ask: {{.Modes}}"
+
+[settings.direction]
+other = "Direction: {{.Direction}}"
+
+[settings.reminder]
+other = "Reminder: {{.Time}}"
+
+[settings.timezone]
+other = "Time zone: {{.Timezone}}"
+
+[settings.ask_new_per_day]
+other = "How many new words a day? The change takes effect tomorrow — today's quota is already counted."
+
+[settings.ask_review_cap]
+other = "How many reviews a day, at most?"
+
+[settings.ask_modes]
+other = "How should words be asked? At least one way has to stay on."
+
+[settings.ask_direction]
+other = "Which way should words be asked?"
+
+[settings.ask_reminder]
+other = "When should I remind you to study?"
+
+[settings.type_new_per_day]
+other = "Write a number from 1 to 100."
+
+[settings.type_reminder]
+other = "Write the time as «21:30»."
+
+[settings.type_timezone]
+other = "Write the time zone as «Asia/Seoul» or «Europe/Moscow»."
+
+[settings.mode_choice]
+other = "pick from options"
+
+[settings.mode_typing]
+other = "type it out"
+
+[settings.direction_recognize]
+other = "word → translation"
+
+[settings.direction_produce]
+other = "translation → word"
+
+[settings.reminder_off]
+other = "off"
+
+[settings.custom]
+other = "Another value"
+
+[settings.back]
+other = "← Back to settings"
+
+[settings.last_mode]
+other = "This is the only way of asking left — turning it off would leave nothing to show on a card."
+
+[settings.bad_value]
+other = "That value will not do. Try again."

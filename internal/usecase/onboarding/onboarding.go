@@ -170,6 +170,13 @@ func (s *Service) Complete(ctx context.Context, choice Choice) (Result, error) {
 		return Result{}, fmt.Errorf("завести курс: %w", err)
 	}
 
+	// Только что выбранный курс становится текущим. Без этого занятие
+	// работало через запасной путь «первый активный», и человек, заведя
+	// второй курс, попадал бы не в тот, который только что выбрал.
+	if err := s.deps.Users.SetCurrentCourse(ctx, choice.UserID, course.ID); err != nil {
+		return Result{}, fmt.Errorf("запомнить выбранный курс: %w", err)
+	}
+
 	return Result{
 		Course:          course,
 		Deck:            deck,

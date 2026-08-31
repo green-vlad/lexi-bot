@@ -426,3 +426,6 @@ other = "Reviews by day: {{.Days}}.\nThat is {{.Total}} over the week."
 
 [stats.no_course]
 other = "Nothing to show yet: pick what to study first — /start"
+
+[notify.reminder]
+other = "Time to study. Your words are waiting: /learn"

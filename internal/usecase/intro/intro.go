@@ -236,7 +236,10 @@ func (s *Service) left(ctx context.Context, courseID study.CourseID, settings *u
 	if err != nil {
 		return 0, fmt.Errorf("прочитать дневные счётчики: %w", err)
 	}
-	return settings.NewPerDay - counter.NewIntroduced, nil
+	// Норма берётся зафиксированная на эти сутки, а текущая из настроек —
+	// только пока человек сегодня не начинал учить: иначе правка настройки
+	// меняла бы задним числом уже начатый день.
+	return counter.LimitFor(settings.NewPerDay) - counter.NewIntroduced, nil
 }
 
 // word собирает слово к показу: само слово и его переводы.

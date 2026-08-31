@@ -141,11 +141,11 @@ func (r *CardRepo) StartLearning(ctx context.Context, q *port.StartLearningQuery
 		accepted bool
 	)
 	err := r.inTx(ctx, func(tx queryer) error {
-		introduced, err := lockCounter(ctx, tx, q.CourseID, q.Day)
+		introduced, dayLimit, err := lockCounter(ctx, tx, q.CourseID, q.Day, q.Limit)
 		if err != nil {
 			return err
 		}
-		if introduced >= q.Limit {
+		if introduced >= dayLimit {
 			return nil
 		}
 
@@ -378,25 +378,33 @@ func (r *CardRepo) NextDue(ctx context.Context, courseID study.CourseID) (time.T
 }
 
 // lockCounter берёт строку дневного счётчика под блокировку, создавая её
-// при необходимости, и возвращает, сколько новых слов уже введено.
+// при необходимости, и заодно фиксирует на эти сутки норму новых слов.
 //
 // ON CONFLICT DO UPDATE именно здесь не бессмысленное присваивание, а способ
 // заблокировать существующую строку: DO NOTHING ничего не вернул бы и ничего
 // не заблокировал.
-func lockCounter(ctx context.Context, tx queryer, courseID study.CourseID, day time.Time) (int, error) {
+//
+// Норму запись при конфликте не трогает — она фиксируется один раз, когда
+// строка заводится. Так правка настройки не действует задним числом: новое
+// значение вступает в силу назавтра, тогда же, когда обнуляется счётчик.
+func lockCounter(ctx context.Context, tx queryer, courseID study.CourseID, day time.Time, limit int) (introduced, dayLimit int, err error) {
 	const query = `
-		INSERT INTO daily_counters (user_course_id, day)
-		VALUES ($1, $2)
+		INSERT INTO daily_counters (user_course_id, day, new_limit)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (user_course_id, day) DO UPDATE
 		SET new_introduced = daily_counters.new_introduced
-		RETURNING new_introduced`
+		RETURNING new_introduced, new_limit`
 
-	var introduced int
-	err := tx.QueryRow(ctx, query, int64(courseID), day).Scan(&introduced)
+	err = tx.QueryRow(ctx, query, int64(courseID), day, limit).Scan(&introduced, &dayLimit)
 	if err != nil {
-		return 0, wrap("заблокировать дневной счётчик", err)
+		return 0, 0, wrap("заблокировать дневной счётчик", err)
 	}
-	return introduced, nil
+	if dayLimit <= 0 {
+		// Строка заведена до появления колонки: нормы на эти сутки нет,
+		// берём текущую.
+		dayLimit = limit
+	}
+	return introduced, dayLimit, nil
 }
 
 // bumpReviews увеличивает дневной счётчик повторений. Курс берётся из самой

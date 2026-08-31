@@ -32,13 +32,13 @@ var _ port.CounterRepo = (*CounterRepo)(nil)
 func (r *CounterRepo) Get(ctx context.Context, courseID study.CourseID, day time.Time) (port.DailyCounter, error) {
 	const op = "прочитать дневные счётчики"
 	const query = `
-		SELECT new_introduced, reviews_done
+		SELECT new_introduced, reviews_done, new_limit
 		FROM daily_counters
 		WHERE user_course_id = $1 AND day = $2`
 
 	counter := port.DailyCounter{Day: day}
 	err := r.db(ctx).QueryRow(ctx, query, int64(courseID), day).
-		Scan(&counter.NewIntroduced, &counter.ReviewsDone)
+		Scan(&counter.NewIntroduced, &counter.ReviewsDone, &counter.NewLimit)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return port.DailyCounter{Day: day}, nil
 	}

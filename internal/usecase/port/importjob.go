@@ -50,10 +50,13 @@ type ImportJob struct {
 // ImportRepo хранит задания импорта.
 type ImportRepo interface {
 	// Create заводит задание и возвращает его с идентификатором.
-	Create(ctx context.Context, job ImportJob) (ImportJob, error)
+	//
+	// Указателем не для того, чтобы задание меняли — реализация его
+	// не трогает, — а чтобы не копировать отчёт об ошибках на каждый вызов.
+	Create(ctx context.Context, job *ImportJob) (ImportJob, error)
 
 	// Update сохраняет ход и итог импорта.
-	Update(ctx context.Context, job ImportJob) error
+	Update(ctx context.Context, job *ImportJob) error
 
 	// ByID возвращает задание.
 	ByID(ctx context.Context, id ImportJobID) (ImportJob, error)

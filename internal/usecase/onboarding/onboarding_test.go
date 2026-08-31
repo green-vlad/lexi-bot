@@ -620,3 +620,7 @@ func TestOnboardingReportsStorageFailures(t *testing.T) {
 func (*fakeDecks) Contains(context.Context, lexicon.DeckID, lexicon.LexemeID) (bool, error) {
 	return false, nil
 }
+
+// Reminding возвращает получателей напоминаний. Заглушкам это не нужно:
+// напоминания рассылает отдельный сценарий со своим стендом.
+func (*fakeSettings) Reminding(context.Context) ([]port.UserReminder, error) { return nil, nil }

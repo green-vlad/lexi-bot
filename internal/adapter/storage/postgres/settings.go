@@ -122,3 +122,57 @@ func (r *SettingsRepo) Save(ctx context.Context, userID user.ID, s user.Settings
 		s.Timezone.String(), modes, s.ReverseDirection)
 	return wrap(op, err)
 }
+
+// Reminding возвращает тех, кому есть смысл напоминать.
+//
+// Отбор по локальному времени здесь не делается: границы суток и перевод
+// часов домен считает сам, и повторять эту арифметику на SQL значило бы
+// завести вторую её версию. Пользователей с включённым напоминанием
+// немного, и перебрать их в сценарии дешевле, чем городить запрос,
+// который однажды разойдётся с доменом.
+func (r *SettingsRepo) Reminding(ctx context.Context) ([]port.UserReminder, error) {
+	const op = "получить получателей напоминаний"
+	const query = `
+		SELECT s.user_id, s.timezone, to_char(s.reminder_at, 'HH24:MI')
+		FROM user_settings s
+		JOIN users u ON u.id = s.user_id
+		WHERE u.deleted_at IS NULL
+		  AND s.reminder_at IS NOT NULL
+		  AND EXISTS (
+		      SELECT 1 FROM user_courses c
+		      WHERE c.user_id = s.user_id AND c.status = 'active'
+		  )
+		ORDER BY s.user_id`
+
+	rows, err := r.db(ctx).Query(ctx, query)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []port.UserReminder
+	for rows.Next() {
+		var (
+			id     int64
+			tzName string
+			at     string
+		)
+		if err := rows.Scan(&id, &tzName, &at); err != nil {
+			return nil, wrap(op, err)
+		}
+
+		tz, err := user.ParseTimezone(tzName)
+		if err != nil {
+			return nil, wrap(op, err)
+		}
+		moment, err := user.ParseTimeOfDay(at)
+		if err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, port.UserReminder{UserID: user.ID(id), Timezone: tz, At: moment})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(op, err)
+	}
+	return out, nil
+}

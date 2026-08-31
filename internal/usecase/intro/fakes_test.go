@@ -204,3 +204,7 @@ func (f *fakeLexemes) ByTerm(context.Context, lexicon.Language, string, int64) (
 }
 
 func (f *fakeLexemes) SaveTranslations(context.Context, []lexicon.Translation) error { return nil }
+
+// Reminding возвращает получателей напоминаний. Заглушкам это не нужно:
+// напоминания рассылает отдельный сценарий со своим стендом.
+func (*fakeSettings) Reminding(context.Context) ([]port.UserReminder, error) { return nil, nil }

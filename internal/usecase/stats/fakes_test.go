@@ -159,3 +159,7 @@ func (f *fakeUsers) SetUILang(context.Context, user.ID, user.UILang) error      
 func (f *fakeUsers) SetCurrentCourse(context.Context, user.ID, study.CourseID) error { return nil }
 func (f *fakeUsers) SoftDelete(context.Context, user.ID, time.Time) error            { return nil }
 func (f *fakeUsers) Purge(context.Context, user.ID) error                            { return nil }
+
+// Reminding возвращает получателей напоминаний. Заглушкам это не нужно:
+// напоминания рассылает отдельный сценарий со своим стендом.
+func (*fakeSettings) Reminding(context.Context) ([]port.UserReminder, error) { return nil, nil }

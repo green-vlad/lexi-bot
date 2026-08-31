@@ -30,11 +30,13 @@ import (
 	"lexi-bot/internal/infra/config"
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
+	"lexi-bot/internal/infra/scheduler"
 	"lexi-bot/internal/usecase/courses"
 	"lexi-bot/internal/usecase/importing"
 	"lexi-bot/internal/usecase/intro"
 	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
+	"lexi-bot/internal/usecase/reminders"
 	"lexi-bot/internal/usecase/session"
 	"lexi-bot/internal/usecase/settings"
 	"lexi-bot/internal/usecase/stats"
@@ -101,6 +103,15 @@ func run() error {
 		return err
 	}
 
+	jobs, err := background(pool, log)
+	if err != nil {
+		return err
+	}
+	jobs.Start(ctx)
+	// Фоновые задачи останавливаются раньше пула, но позже транспорта:
+	// начатый тик имеет право дописать свою транзакцию.
+	defer jobs.Stop()
+
 	log.Info("бот запущен")
 	if err := transport.Run(ctx, handler); err != nil {
 		return err
@@ -108,6 +119,41 @@ func run() error {
 
 	log.Info("получен сигнал завершения, останавливаемся")
 	return nil
+}
+
+// reminderTick — как часто планировщик смотрит, кому пора напомнить.
+//
+// Пять минут: точнее незачем, напоминание на минуту позже обещанного никого
+// не подводит, а реже — значит промахиваться мимо окна и терять напоминания.
+const reminderTick = 5 * time.Minute
+
+// background собирает задачи, которые идут сами по себе, без апдейтов.
+func background(pool *pgxpool.Pool, log *slog.Logger) (*scheduler.Scheduler, error) {
+	reminding, err := reminders.New(reminders.Deps{
+		Settings: storage.NewSettingsRepo(pool),
+		Outbox:   storage.NewOutboxRepo(pool),
+		Clock:    port.ClockFunc(time.Now),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return scheduler.New(log, scheduler.Job{
+		Name:  "напоминания",
+		Every: reminderTick,
+		Run: func(ctx context.Context) error {
+			report, err := reminding.Tick(ctx)
+			if err != nil {
+				return err
+			}
+			if report.Scheduled > 0 {
+				log.Info("напоминания поставлены в очередь",
+					slog.Int("scheduled", report.Scheduled),
+					slog.Int("considered", report.Considered))
+			}
+			return nil
+		},
+	})
 }
 
 // router собирает маршруты и общий для них конвейер middleware.
@@ -171,7 +217,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	// Предсказуемость этого разброса ничем не грозит.
 	jitter := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) //nolint:gosec // разброс интервалов, а не секреты
 
-	scheduler, err := study.NewSM2(study.DefaultSM2Config(), jitter)
+	sm2, err := study.NewSM2(study.DefaultSM2Config(), jitter)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +248,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		Reviews:   reviews,
 		Clock:     clock,
 		Rand:      jitter,
-		Scheduler: scheduler,
+		Scheduler: sm2,
 		Resolver:  study.DefaultRatingResolver(),
 	})
 	if err != nil {
@@ -216,7 +262,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		Settings:  settingsRepo,
 		Lexemes:   lexemes,
 		Clock:     clock,
-		Scheduler: scheduler,
+		Scheduler: sm2,
 	})
 	if err != nil {
 		return nil, err

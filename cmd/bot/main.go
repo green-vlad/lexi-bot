@@ -32,6 +32,7 @@ import (
 	"lexi-bot/internal/infra/postgres"
 	"lexi-bot/internal/infra/scheduler"
 	"lexi-bot/internal/usecase/courses"
+	"lexi-bot/internal/usecase/delivery"
 	"lexi-bot/internal/usecase/importing"
 	"lexi-bot/internal/usecase/intro"
 	"lexi-bot/internal/usecase/onboarding"
@@ -103,10 +104,11 @@ func run() error {
 		return err
 	}
 
-	jobs, err := background(pool, log)
+	jobs, stopLimiter, err := background(pool, transport, catalog, log)
 	if err != nil {
 		return err
 	}
+	defer stopLimiter()
 	jobs.Start(ctx)
 	// Фоновые задачи останавливаются раньше пула, но позже транспорта:
 	// начатый тик имеет право дописать свою транзакцию.
@@ -128,32 +130,79 @@ func run() error {
 const reminderTick = 5 * time.Minute
 
 // background собирает задачи, которые идут сами по себе, без апдейтов.
-func background(pool *pgxpool.Pool, log *slog.Logger) (*scheduler.Scheduler, error) {
+//
+// Их две, и разделены они не случайно: планировщик только записывает, кому
+// написать, и его работу можно повторять сколько угодно раз; рассылка
+// необратима, и у неё свои заботы — скорость и заблокировавшие бота.
+func background(
+	pool *pgxpool.Pool, messenger port.Messenger, catalog port.Catalog, log *slog.Logger,
+) (*scheduler.Scheduler, func(), error) {
+	clock := port.ClockFunc(time.Now)
+	outbox := storage.NewOutboxRepo(pool)
+
 	reminding, err := reminders.New(reminders.Deps{
 		Settings: storage.NewSettingsRepo(pool),
-		Outbox:   storage.NewOutboxRepo(pool),
-		Clock:    port.ClockFunc(time.Now),
+		Outbox:   outbox,
+		Clock:    clock,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return scheduler.New(log, scheduler.Job{
-		Name:  "напоминания",
-		Every: reminderTick,
-		Run: func(ctx context.Context) error {
-			report, err := reminding.Tick(ctx)
-			if err != nil {
-				return err
-			}
-			if report.Scheduled > 0 {
-				log.Info("напоминания поставлены в очередь",
-					slog.Int("scheduled", report.Scheduled),
-					slog.Int("considered", report.Considered))
-			}
-			return nil
-		},
+	limiter := delivery.NewTickerLimiter(delivery.DefaultRate)
+	sending, err := delivery.New(&delivery.Deps{
+		Outbox:    outbox,
+		Users:     storage.NewUserRepo(pool),
+		Messenger: messenger,
+		Catalog:   catalog,
+		Clock:     clock,
+		Limiter:   limiter,
 	})
+	if err != nil {
+		limiter.Stop()
+		return nil, nil, err
+	}
+
+	jobs, err := scheduler.New(log,
+		scheduler.Job{
+			Name:  "напоминания",
+			Every: reminderTick,
+			Run: func(ctx context.Context) error {
+				report, err := reminding.Tick(ctx)
+				if err != nil {
+					return err
+				}
+				if report.Scheduled > 0 {
+					log.Info("напоминания поставлены в очередь",
+						slog.Int("scheduled", report.Scheduled),
+						slog.Int("considered", report.Considered))
+				}
+				return nil
+			},
+		},
+		scheduler.Job{
+			Name:  "рассылка",
+			Every: delivery.Interval,
+			Run: func(ctx context.Context) error {
+				report, err := sending.Deliver(ctx)
+				if err != nil {
+					return err
+				}
+				if report.Sent > 0 || report.Blocked > 0 || report.Failed > 0 {
+					log.Info("рассылка отработала",
+						slog.Int("sent", report.Sent),
+						slog.Int("blocked", report.Blocked),
+						slog.Int("failed", report.Failed))
+				}
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		limiter.Stop()
+		return nil, nil, err
+	}
+	return jobs, limiter.Stop, nil
 }
 
 // router собирает маршруты и общий для них конвейер middleware.

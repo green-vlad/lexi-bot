@@ -3,6 +3,7 @@ package telegram
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,9 +27,21 @@ func (t *Transport) SendMessage(ctx context.Context, msg port.OutgoingMessage) (
 
 	sent, err := t.api.SendMessage(ctx, params)
 	if err != nil {
-		return 0, fmt.Errorf("отправить сообщение в чат %d: %w", msg.ChatID, err)
+		return 0, fmt.Errorf("отправить сообщение в чат %d: %w", msg.ChatID, explainSend(err))
 	}
 	return port.MessageID(sent.ID), nil
+}
+
+// explainSend переводит отказ Telegram в понятие приложения.
+//
+// «Forbidden» от Telegram означает одно: человек заблокировал бота или
+// удалил чат. Для рассылки это не сбой, который стоит повторить, а конец
+// разговора — и знать об этом должен сценарий, а не библиотека.
+func explainSend(err error) error {
+	if errors.Is(err, bot.ErrorForbidden) {
+		return fmt.Errorf("%w: %w", port.ErrBlocked, err)
+	}
+	return err
 }
 
 // EditMessage правит текст и клавиатуру отправленного сообщения.

@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/settings — settings\n/stats — how it is going\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nReminders are coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/settings — settings\n/stats — how it is going\n/pause — pause studying\n/delete_me — delete my data\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nThe study reminder is set up in /settings."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -429,3 +429,34 @@ other = "Nothing to show yet: pick what to study first — /start"
 
 [notify.reminder]
 other = "Time to study. Your words are waiting: /learn"
+
+[account.paused]
+description = "How many courses were paused"
+one = "Studying is paused: {{.Count}} course stopped. No cards, no reminders. Come back with /resume"
+other = "Studying is paused: {{.Count}} courses stopped. No cards, no reminders. Come back with /resume"
+
+[account.already_paused]
+other = "There are no active courses — nothing to stop."
+
+[account.resumed]
+description = "How many courses were resumed"
+one = "{{.Count}} course is back. Let's go: /learn"
+other = "{{.Count}} courses are back. Let's go: /learn"
+
+[account.nothing_paused]
+other = "Nothing is paused."
+
+[account.delete_confirm]
+other = "Delete all your data? Courses, cards, progress, your own words and settings will go. This cannot be undone — there will be nothing to restore."
+
+[account.delete_yes]
+other = "Yes, delete everything"
+
+[account.delete_keep]
+other = "No, keep it"
+
+[account.deleted]
+other = "Done, everything is gone. If you want to start over — /start"
+
+[account.delete_cancelled]
+other = "Nothing was touched."

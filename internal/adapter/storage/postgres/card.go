@@ -354,6 +354,33 @@ func nullableTime(t time.Time) *time.Time {
 	return &t
 }
 
+// DueBefore возвращает сроки карточек, которые подойдут до момента until.
+func (r *CardRepo) DueBefore(ctx context.Context, courseID study.CourseID, until time.Time) ([]time.Time, error) {
+	const op = "получить сроки повторений"
+	const query = `SELECT due_at FROM cards
+		WHERE user_course_id = $1 AND ` + repetitionStates + ` AND due_at < $2
+		ORDER BY due_at`
+
+	rows, err := r.db(ctx).Query(ctx, query, int64(courseID), until)
+	if err != nil {
+		return nil, wrap(op, err)
+	}
+	defer rows.Close()
+
+	var out []time.Time
+	for rows.Next() {
+		var at time.Time
+		if err := rows.Scan(&at); err != nil {
+			return nil, wrap(op, err)
+		}
+		out = append(out, at)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(op, err)
+	}
+	return out, nil
+}
+
 // NextDue возвращает ближайший срок повторения в курсе.
 //
 // Запрос идёт по тому же индексу, что и выдача карточек: отложенные

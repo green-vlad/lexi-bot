@@ -912,3 +912,7 @@ func (f *fakeCards) DueBefore(_ context.Context, courseID study.CourseID, until 
 	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
 	return out, nil
 }
+
+// Reminding возвращает получателей напоминаний. Заглушкам это не нужно:
+// напоминания рассылает отдельный сценарий со своим стендом.
+func (*fakeSettings) Reminding(context.Context) ([]port.UserReminder, error) { return nil, nil }

@@ -7,6 +7,7 @@ import (
 
 	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
+	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/settings"
 )
 
@@ -270,3 +271,7 @@ func TestNewNeedsDependencies(t *testing.T) {
 		t.Error("сценарий без зависимостей должен быть ошибкой")
 	}
 }
+
+// Reminding возвращает получателей напоминаний. Заглушкам это не нужно:
+// напоминания рассылает отдельный сценарий со своим стендом.
+func (*fakeSettings) Reminding(context.Context) ([]port.UserReminder, error) { return nil, nil }

@@ -570,3 +570,66 @@ func TestApplyRejectsStaleVersion(t *testing.T) {
 		t.Errorf("Apply() с актуальной версией = %v", err)
 	}
 }
+
+func TestDailyQuotaIsFixedForTheDay(t *testing.T) {
+	pool := pgtest.New(t)
+	ctx := context.Background()
+	repo := postgres.NewCardRepo(pool)
+
+	f := newCourse(t, pool, 8)
+	learning := study.CardState{State: study.StateLearning, DueAt: testNow, EaseFactor: study.DefaultEaseFactor}
+
+	// Первое слово дня фиксирует норму: два.
+	start := func(i, limit int) bool {
+		t.Helper()
+		_, accepted, err := repo.StartLearning(ctx, &port.StartLearningQuery{
+			CourseID: f.course.ID, LexemeID: f.lexemes[i].ID,
+			State: learning, Now: testNow, Day: testDay, Limit: limit,
+		})
+		if err != nil {
+			t.Fatalf("StartLearning() вернул ошибку: %v", err)
+		}
+		return accepted
+	}
+
+	if !start(0, 2) {
+		t.Fatal("первое слово не заведено")
+	}
+
+	// Человек поднял норму до восьми в середине дня. Сегодня это ничего
+	// не меняет: норма на сутки уже отсчитана, и лишних слов сверх
+	// запланированного он не получит.
+	if !start(1, 8) {
+		t.Fatal("второе слово не заведено: норма была два")
+	}
+	if start(2, 8) {
+		t.Error("третье слово заведено: норма дня была два, а не восемь")
+	}
+
+	// Назавтра действует новая норма — счётчик и её снимок начинаются
+	// с чистого листа.
+	tomorrow := testDay.AddDate(0, 0, 1)
+	_, accepted, err := repo.StartLearning(ctx, &port.StartLearningQuery{
+		CourseID: f.course.ID, LexemeID: f.lexemes[2].ID,
+		State: learning, Now: testNow.AddDate(0, 0, 1), Day: tomorrow, Limit: 8,
+	})
+	if err != nil {
+		t.Fatalf("StartLearning() вернул ошибку: %v", err)
+	}
+	if !accepted {
+		t.Error("назавтра новая норма не вступила в силу")
+	}
+
+	// И счётчик отдаёт зафиксированную норму, а не текущую настройку:
+	// по ней меню считает, сколько слов человеку сегодня осталось.
+	counter, err := postgres.NewCounterRepo(pool).Get(ctx, f.course.ID, testDay)
+	if err != nil {
+		t.Fatalf("Get() вернул ошибку: %v", err)
+	}
+	if counter.NewLimit != 2 {
+		t.Errorf("норма дня = %d, ожидалось 2", counter.NewLimit)
+	}
+	if got := counter.LimitFor(8); got != 2 {
+		t.Errorf("LimitFor() = %d, ожидалась зафиксированная норма", got)
+	}
+}

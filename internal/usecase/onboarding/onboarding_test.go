@@ -179,11 +179,17 @@ func (f *fakeSettings) Save(_ context.Context, userID user.ID, s user.Settings) 
 
 // fakeUsers — UserRepo в памяти: онбордингу нужен только SetUILang.
 type fakeUsers struct {
-	langs map[user.ID]user.UILang
-	fail  error
+	langs   map[user.ID]user.UILang
+	current map[user.ID]study.CourseID
+	fail    error
 }
 
-func newFakeUsers() *fakeUsers { return &fakeUsers{langs: map[user.ID]user.UILang{}} }
+func newFakeUsers() *fakeUsers {
+	return &fakeUsers{
+		langs:   map[user.ID]user.UILang{},
+		current: map[user.ID]study.CourseID{},
+	}
+}
 
 func (f *fakeUsers) Ensure(_ context.Context, u *user.User) (user.User, bool, error) {
 	return *u, false, nil
@@ -203,8 +209,13 @@ func (f *fakeUsers) SetUILang(_ context.Context, id user.ID, lang user.UILang) e
 	return nil
 }
 
-func (f *fakeUsers) SetCurrentCourse(context.Context, user.ID, study.CourseID) error {
-	// Онбордингу текущий курс не нужен.
+// SetCurrentCourse запоминает выбранный курс. Заглушка, молча забывавшая
+// его, сделала бы бессмысленной проверку того, что онбординг курс запоминает.
+func (f *fakeUsers) SetCurrentCourse(_ context.Context, id user.ID, courseID study.CourseID) error {
+	if f.fail != nil {
+		return f.fail
+	}
+	f.current[id] = courseID
 	return nil
 }
 
@@ -303,6 +314,12 @@ func TestOnboardingHappyPath(t *testing.T) {
 	}
 	if result.Deck.Title == "" {
 		t.Error("колода не вернулась: её название нужно показать в ответе")
+	}
+	// Выбранный курс запомнен как текущий. Без этого занятие работало бы
+	// через запасной путь «первый активный», и человек, заведя второй курс,
+	// попадал бы не в тот, который только что выбрал.
+	if f.users.current[42] != result.Course.ID {
+		t.Errorf("текущий курс = %d, ожидался %d", f.users.current[42], result.Course.ID)
 	}
 
 	// Настройки по умолчанию: таймзона из конфигурации, напоминание

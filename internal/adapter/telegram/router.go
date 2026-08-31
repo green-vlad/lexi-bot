@@ -9,13 +9,15 @@ import (
 
 // Router раскладывает апдейты по хендлерам.
 //
-// Маршрутов три вида, и они не пересекаются: команда, нажатие кнопки и
-// обычный текст. Порядок разбора обратный порядку частоты: сначала кнопки
-// (их больше всего в учебной сессии), потом команды, потом текст.
+// Маршрутов четыре вида, и они не пересекаются: команда, нажатие кнопки,
+// присланный файл и обычный текст. Порядок разбора обратный порядку
+// частоты: сначала кнопки (их больше всего в учебной сессии), потом
+// команды, потом файлы, потом текст.
 type Router struct {
 	commands  map[string]port.UpdateHandler
 	actions   map[string]port.UpdateHandler
 	callback  port.UpdateHandler
+	document  port.UpdateHandler
 	text      port.UpdateHandler
 	unknown   port.UpdateHandler
 	middlewar []Middleware
@@ -59,6 +61,11 @@ func (r *Router) CallbackAction(action string, handler port.UpdateHandler) {
 // которых не привязано отдельно.
 func (r *Router) Callback(handler port.UpdateHandler) { r.callback = handler }
 
+// Document привязывает хендлер к присланным файлам. Отдельно от текста
+// потому, что у сообщения с файлом текста может не быть вовсе, а подпись
+// к нему ответом на карточку точно не является.
+func (r *Router) Document(handler port.UpdateHandler) { r.document = handler }
+
 // Text привязывает хендлер к обычному тексту: ответы в режиме ввода
 // и шаги диалогов приходят именно так.
 func (r *Router) Text(handler port.UpdateHandler) { r.text = handler }
@@ -95,6 +102,8 @@ func (r *Router) route(u *port.Update) port.UpdateHandler {
 			return handler
 		}
 		return orNoop(r.unknown)
+	case u.Document != nil:
+		return orNoop(r.document)
 	case u.Text != "":
 		return orNoop(r.text)
 	default:

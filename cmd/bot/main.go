@@ -31,6 +31,7 @@ import (
 	"lexi-bot/internal/infra/logger"
 	"lexi-bot/internal/infra/postgres"
 	"lexi-bot/internal/usecase/courses"
+	"lexi-bot/internal/usecase/importing"
 	"lexi-bot/internal/usecase/intro"
 	"lexi-bot/internal/usecase/onboarding"
 	"lexi-bot/internal/usecase/port"
@@ -248,6 +249,18 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
+	importService, err := importing.New(importing.Deps{
+		Vocab: vocabService,
+		Jobs:  storage.NewImportRepo(pool),
+	})
+	if err != nil {
+		return nil, err
+	}
+	importHandler, err := telegram.NewImporting(importService, transport)
+	if err != nil {
+		return nil, err
+	}
+
 	start.Register(r)
 	language.Register(r)
 	menu.Register(r)
@@ -255,6 +268,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	introHandler.Register(r)
 	decksHandler.Register(r)
 	vocabHandler.Register(r)
+	importHandler.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
 	return r, nil

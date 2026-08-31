@@ -99,6 +99,9 @@ func (f *fakeCards) Due(context.Context, port.DueQuery) ([]study.Card, error) { 
 func (f *fakeCards) CountDue(context.Context, study.CourseID, time.Time) (int, error) {
 	return 0, nil
 }
+func (f *fakeCards) DueBefore(context.Context, study.CourseID, time.Time) ([]time.Time, error) {
+	return nil, nil
+}
 func (f *fakeCards) Apply(context.Context, *port.ReviewOutcome) error { return nil }
 func (f *fakeCards) ByID(_ context.Context, id study.CardID) (study.Card, error) {
 	for i := range f.cards {

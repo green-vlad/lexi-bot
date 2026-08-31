@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"lexi-bot/internal/domain/lexicon"
@@ -371,6 +372,10 @@ func (s *stubCards) NextDue(_ context.Context, courseID study.CourseID) (time.Ti
 type stubReviews struct {
 	total   int
 	correct int
+	// days — дни, в которые человек отвечал, от свежего к старому.
+	// Заглушка, всегда отдававшая пустоту, сделала бы бессмысленной
+	// проверку серии занятий.
+	days []time.Time
 }
 
 func (s *stubReviews) Add(context.Context, user.ID, *study.Review) error { return nil }
@@ -380,11 +385,26 @@ func (s *stubReviews) Stats(context.Context, port.StatsQuery) (port.ReviewStats,
 }
 
 func (s *stubReviews) ActiveDays(context.Context, user.ID, user.Timezone, time.Time) ([]time.Time, error) {
-	return nil, nil
+	return s.days, nil
 }
 
 // Contains сообщает, есть ли слово в колоде. Личный словарь заглушке
 // не нужен: она обслуживает сценарии, которые своих слов не заводят.
 func (*stubDeckSource) Contains(context.Context, lexicon.DeckID, lexicon.LexemeID) (bool, error) {
 	return false, nil
+}
+
+// DueBefore отдаёт сроки карточек, которые подойдут до указанного момента.
+// Отбор здесь настоящий: заглушка, отдающая всё подряд, скрыла бы ошибку
+// в границах прогноза.
+func (s *stubCards) DueBefore(_ context.Context, courseID study.CourseID, until time.Time) ([]time.Time, error) {
+	var out []time.Time
+	for i := range s.cards {
+		card := &s.cards[i]
+		if card.CourseID == courseID && card.State.InRepetition() && card.DueAt.Before(until) {
+			out = append(out, card.DueAt)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	return out, nil
 }

@@ -22,7 +22,7 @@ other = "Hi, {{.Name}}! I'll help you learn words — a few new ones a day, plus
 other = "Choose the interface language."
 
 [help.text]
-other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/settings — settings\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nStatistics and reminders are coming in the next updates."
+other = "Here is what I can do:\n\n/learn — study: review words or take new ones\n/decks — my courses\n/add — add your own word\n/import — load a dictionary from CSV\n/settings — settings\n/stats — how it is going\n/start — start over\n/language — interface language\n/cancel — abort a dialog\n/help — this help\n\nReminders are coming in the next updates."
 
 [language.changed]
 other = "Interface language switched to English."
@@ -395,3 +395,34 @@ other = "This is the only way of asking left — turning it off would leave noth
 
 [settings.bad_value]
 other = "That value will not do. Try again."
+
+[stats.title]
+other = "How it is going:"
+
+[stats.progress]
+other = "Learned: {{.Learned}}. In progress: {{.Learning}}. Ahead: {{.Remaining}}."
+
+[stats.known]
+description = "How many words were marked as already known"
+one = "You marked {{.Count}} word as already known."
+other = "You marked {{.Count}} words as already known."
+
+[stats.streak]
+description = "How many days in a row the person has studied"
+one = "You have studied {{.Count}} day in a row."
+other = "You have studied {{.Count}} days in a row."
+
+[stats.accuracy]
+other = "Accuracy: {{.Week}}% over the week, {{.Month}}% over the month."
+
+[stats.accuracy_week]
+other = "Accuracy over the week: {{.Percent}}%."
+
+[stats.accuracy_month]
+other = "Accuracy over the month: {{.Percent}}%."
+
+[stats.forecast]
+other = "Reviews by day: {{.Days}}.\nThat is {{.Total}} over the week."
+
+[stats.no_course]
+other = "Nothing to show yet: pick what to study first — /start"

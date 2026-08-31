@@ -37,6 +37,7 @@ import (
 	"lexi-bot/internal/usecase/port"
 	"lexi-bot/internal/usecase/session"
 	"lexi-bot/internal/usecase/settings"
+	"lexi-bot/internal/usecase/stats"
 	"lexi-bot/internal/usecase/vocab"
 	"lexi-bot/locales"
 )
@@ -189,6 +190,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	counters := storage.NewCounterRepo(pool)
 	settingsRepo := storage.NewSettingsRepo(pool)
 	lexemes := storage.NewLexemeRepo(pool)
+	reviews := storage.NewReviewRepo(pool)
 
 	learning, err := session.New(&session.Deps{
 		Cards:     cards,
@@ -197,6 +199,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		Settings:  settingsRepo,
 		Lexemes:   lexemes,
 		Decks:     decks,
+		Reviews:   reviews,
 		Clock:     clock,
 		Rand:      jitter,
 		Scheduler: scheduler,
@@ -271,6 +274,23 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 		return nil, err
 	}
 
+	statsService, err := stats.New(&stats.Deps{
+		Users:    users,
+		Courses:  courseRepo,
+		Decks:    decks,
+		Cards:    cards,
+		Reviews:  reviews,
+		Settings: settingsRepo,
+		Clock:    clock,
+	})
+	if err != nil {
+		return nil, err
+	}
+	statsHandler, err := telegram.NewStats(statsService, transport)
+	if err != nil {
+		return nil, err
+	}
+
 	start.Register(r)
 	language.Register(r)
 	menu.Register(r)
@@ -280,6 +300,7 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 	vocabHandler.Register(r)
 	importHandler.Register(r)
 	settingsHandler.Register(r)
+	statsHandler.Register(r)
 	r.Command("ping", telegram.Ping(transport))
 	r.Unknown(telegram.UnknownCommand(transport))
 	return r, nil

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"time"
@@ -22,7 +23,7 @@ type Middleware func(next port.UpdateHandler) port.UpdateHandler
 // паника здесь превращается в ошибку, а пользователь получает извинение
 // вместо тишины: молчащий бот выглядит сломанным сильнее, чем честное
 // «что-то пошло не так».
-func Recover(messenger port.Messenger, catalog port.Catalog, log *slog.Logger) Middleware {
+func Recover(messenger port.Messenger, catalog port.Catalog, log *slog.Logger, alerter *Alerter) Middleware {
 	return func(next port.UpdateHandler) port.UpdateHandler {
 		return port.UpdateHandlerFunc(func(ctx context.Context, u *port.Update) (err error) {
 			defer func() {
@@ -36,6 +37,10 @@ func Recover(messenger port.Messenger, catalog port.Catalog, log *slog.Logger) M
 					slog.String("stack", string(debug.Stack())))
 
 				apologize(ctx, messenger, catalog, u, log)
+				// Паника — то, о чём стоит узнать сразу, а не из лога
+				// на следующий день.
+				alerter.Alert(ctx, "panic", fmt.Sprintf(
+					"🔥 Паника при обработке апдейта %d: %v", u.ID, reason))
 				err = errPanic
 			}()
 

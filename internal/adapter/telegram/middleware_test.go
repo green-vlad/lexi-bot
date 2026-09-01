@@ -18,7 +18,7 @@ func TestRecoverKeepsProcessAlive(t *testing.T) {
 	catalog := testCatalog(t)
 
 	router := telegram.NewRouter()
-	router.Use(telegram.Recover(messenger, catalog, quietLogger()))
+	router.Use(telegram.Recover(messenger, catalog, quietLogger(), nil))
 	router.Command("learn", port.UpdateHandlerFunc(func(context.Context, *port.Update) error {
 		panic("сценарий разыменовал nil")
 	}))
@@ -47,7 +47,7 @@ func TestRecoverSpeaksUserLanguage(t *testing.T) {
 
 	router := telegram.NewRouter()
 	// Локализация снаружи: извинение должно прийти на языке пользователя.
-	router.Use(telegram.Localize(catalog), telegram.Recover(messenger, catalog, quietLogger()))
+	router.Use(telegram.Localize(catalog), telegram.Recover(messenger, catalog, quietLogger(), nil))
 	router.Command("learn", port.UpdateHandlerFunc(func(context.Context, *port.Update) error {
 		panic("что-то пошло не так")
 	}))
@@ -81,7 +81,7 @@ func TestRecoverSurvivesBrokenMessenger(t *testing.T) {
 	messenger := &fakeMessenger{err: errors.New("Telegram недоступен")}
 
 	router := telegram.NewRouter()
-	router.Use(telegram.Recover(messenger, testCatalog(t), quietLogger()))
+	router.Use(telegram.Recover(messenger, testCatalog(t), quietLogger(), nil))
 	router.Command("learn", port.UpdateHandlerFunc(func(context.Context, *port.Update) error {
 		panic("паника")
 	}))

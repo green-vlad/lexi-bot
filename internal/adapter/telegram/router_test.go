@@ -193,7 +193,21 @@ func (f *fakeUsers) SetCurrentCourse(_ context.Context, id user.ID, courseID stu
 }
 
 func (f *fakeUsers) SoftDelete(context.Context, user.ID, time.Time) error { return nil }
-func (f *fakeUsers) Purge(context.Context, user.ID) error                 { return nil }
+
+// Purge удаляет запись без следа. Заглушка, оставлявшая пользователя
+// на месте, сделала бы бессмысленной проверку /delete_me.
+func (f *fakeUsers) Purge(_ context.Context, id user.ID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for tgID, u := range f.byTgID {
+		if u.ID == id {
+			delete(f.byTgID, tgID)
+			return nil
+		}
+	}
+	return port.ErrNotFound
+}
 
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 1}))

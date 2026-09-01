@@ -177,6 +177,44 @@ func (s *Service) SetStatus(ctx context.Context, userID user.ID, courseID study.
 	return nil
 }
 
+// PauseAll останавливает все активные курсы разом.
+//
+// Это /pause: человек уезжает в отпуск или просто устал, и ему нужно одно
+// действие, а не обход списка курсов по одному. Архивные не трогаются —
+// они убраны насовсем, и «продолжить» возвращать их не должно.
+func (s *Service) PauseAll(ctx context.Context, userID user.ID) (int, error) {
+	return s.switchAll(ctx, userID, study.CourseActive, study.CoursePaused)
+}
+
+// ResumeAll возвращает в строй всё, что стоит на паузе.
+//
+// Различить, что остановлено командой, а что руками в /decks, нельзя:
+// в базе это одно состояние. Поэтому возвращается всё, а человеку говорится
+// сколько — чтобы он заметил, если вернулось лишнее.
+func (s *Service) ResumeAll(ctx context.Context, userID user.ID) (int, error) {
+	return s.switchAll(ctx, userID, study.CoursePaused, study.CourseActive)
+}
+
+// switchAll переводит все курсы из одного состояния в другое.
+func (s *Service) switchAll(ctx context.Context, userID user.ID, from, to study.CourseStatus) (int, error) {
+	list, err := s.deps.Courses.ByUser(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("получить курсы: %w", err)
+	}
+
+	changed := 0
+	for i := range list {
+		if list[i].Status != from {
+			continue
+		}
+		if err := s.deps.Courses.SetStatus(ctx, list[i].ID, to); err != nil {
+			return 0, fmt.Errorf("сменить состояние курса %d: %w", list[i].ID, err)
+		}
+		changed++
+	}
+	return changed, nil
+}
+
 // owned убеждается, что курс принадлежит этому пользователю.
 //
 // Идентификатор курса приезжает из кнопки, а кнопку можно подделать: без

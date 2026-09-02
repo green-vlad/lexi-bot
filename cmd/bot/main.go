@@ -28,7 +28,9 @@ import (
 	"lexi-bot/internal/domain/study"
 	"lexi-bot/internal/domain/user"
 	"lexi-bot/internal/infra/config"
+	"lexi-bot/internal/infra/health"
 	"lexi-bot/internal/infra/logger"
+	"lexi-bot/internal/infra/metrics"
 	"lexi-bot/internal/infra/postgres"
 	"lexi-bot/internal/infra/scheduler"
 	"lexi-bot/internal/usecase/account"
@@ -74,7 +76,23 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	transport, err := telegram.New(telegram.Config{
+		Token:       cfg.BotToken,
+		PollTimeout: cfg.PollTimeout,
+		Logger:      log,
+	})
+	if err != nil {
+		return err
+	}
+
+	registry := metrics.New()
+	alerter := telegram.NewAlerter(transport, cfg.AdminChatID, time.Now, log)
+
+	// Транспорт создаётся до миграции затем, чтобы о сорванной миграции
+	// было кому сообщить: бот при ней не поднимется, и молча упавший
+	// процесс объяснит себя только логом на сервере.
 	if err := migrate(ctx, cfg.DatabaseURL, log); err != nil {
+		alerter.Alert(ctx, "migration", "🔥 Миграция не прошла, бот не поднялся: "+err.Error())
 		return err
 	}
 
@@ -91,16 +109,23 @@ func run() error {
 		return err
 	}
 
-	transport, err := telegram.New(telegram.Config{
-		Token:       cfg.BotToken,
-		PollTimeout: cfg.PollTimeout,
-		Logger:      log,
+	service, err := health.New(health.Config{
+		Addr:    cfg.HTTPAddr,
+		Ping:    pool.Ping,
+		Metrics: registry.Expose,
+		Clock:   time.Now,
+		Logger:  log,
 	})
 	if err != nil {
 		return err
 	}
+	poolMetrics(registry, pool)
+	service.Start(ctx)
+	defer service.Stop()
 
-	handler, err := router(transport, catalog, pool, &cfg, log)
+	transport.SetHooks(service.PollSucceeded, alerter.APIFailed)
+
+	handler, err := router(transport, catalog, pool, &cfg, log, registry, alerter)
 	if err != nil {
 		return err
 	}
@@ -213,7 +238,10 @@ func background(
 // логирование, чтобы в лог попал и апдейт, обработка которого сорвалась
 // на определении пользователя. Затем определение пользователя, и только
 // после него локализация — язык интерфейса известен из его настроек.
-func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool, cfg *config.Config, log *slog.Logger) (port.UpdateHandler, error) {
+func router(
+	transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool,
+	cfg *config.Config, log *slog.Logger, registry *metrics.Registry, alerter *telegram.Alerter,
+) (port.UpdateHandler, error) {
 	// Репозитории заводятся по одному разу и раздаются сценариям: каждый
 	// из них — тонкая обёртка над пулом, но два экземпляра одного и того же
 	// в графе зависимостей только сбивают с толку.
@@ -249,7 +277,8 @@ func router(transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.P
 
 	r := telegram.NewRouter()
 	r.Use(
-		telegram.Recover(transport, catalog, log),
+		telegram.Recover(transport, catalog, log, alerter),
+		telegram.Measure(registry),
 		telegram.Logging(log),
 		telegram.AnswerCallbacks(transport, log),
 		telegram.Identify(users, log),
@@ -448,4 +477,23 @@ func migrate(ctx context.Context, dsn string, log *slog.Logger) error {
 		)
 	}
 	return nil
+}
+
+// poolMetrics показывает состояние пула соединений.
+//
+// Датчиками, а не счётчиками: важно не сколько соединений брали за всё
+// время, а сколько занято прямо сейчас — по этому числу видно утечку.
+func poolMetrics(registry *metrics.Registry, pool *pgxpool.Pool) {
+	registry.NewGauge("lexi_db_connections_acquired",
+		"Занятые соединения пула", func() float64 {
+			return float64(pool.Stat().AcquiredConns())
+		})
+	registry.NewGauge("lexi_db_connections_idle",
+		"Свободные соединения пула", func() float64 {
+			return float64(pool.Stat().IdleConns())
+		})
+	registry.NewGauge("lexi_db_connections_total",
+		"Всего соединений в пуле", func() float64 {
+			return float64(pool.Stat().TotalConns())
+		})
 }

@@ -67,6 +67,10 @@ type Transport struct {
 	// это сам транспорт, и на этапе создания его ещё нет. Читается
 	// атомарно, потому что библиотека вызывает обработку из своих горутин.
 	handler atomic.Pointer[port.UpdateHandler]
+	// onPoll и onAPIError ставятся в SetHooks по той же причине и читаются
+	// из горутин HTTP-клиента.
+	onPoll     atomic.Pointer[func()]
+	onAPIError atomic.Pointer[func(err error)]
 }
 
 var _ port.Messenger = (*Transport)(nil)
@@ -94,13 +98,17 @@ func New(cfg Config) (*Transport, error) {
 		bot.WithAllowedUpdates(bot.AllowedUpdates{"message", "callback_query"}),
 		bot.WithErrorsHandler(func(err error) {
 			t.log.Error("ошибка Telegram API", slog.Any("error", err))
+			t.apiFailed(err)
 		}),
 	}
 	if cfg.PollTimeout > 0 {
 		// Таймаут клиента должен быть заметно больше времени ожидания
 		// в getUpdates: иначе клиент оборвёт запрос ровно тогда, когда
 		// Telegram законно держит его, ожидая событий.
-		client := &http.Client{Timeout: cfg.PollTimeout + 15*time.Second}
+		client := &http.Client{
+			Timeout:   cfg.PollTimeout + 15*time.Second,
+			Transport: &observer{transport: t},
+		}
 		opts = append(opts, bot.WithHTTPClient(cfg.PollTimeout, client))
 	}
 	if cfg.ServerURL != "" {
@@ -282,4 +290,53 @@ func orInt(value, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+// observer подглядывает за запросами к Telegram.
+//
+// Отсюда, а не из обработчика апдейтов: удачный цикл getUpdates бывает
+// и пустым — ночью апдейтов нет часами, — а признаком жизни он остаётся.
+// Считать бота больным за тихую ночь было бы ложной тревогой, а не заметить
+// отобранный токен — упущенной настоящей.
+type observer struct {
+	transport *Transport
+}
+
+// pollMethod — метод, по которому узнаётся цикл опроса.
+const pollMethod = "getUpdates"
+
+func (o *observer) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+
+	switch {
+	case err != nil:
+		o.transport.apiFailed(err)
+	case resp.StatusCode >= http.StatusBadRequest:
+		o.transport.apiFailed(fmt.Errorf("telegram ответил %s", resp.Status))
+	case strings.Contains(r.URL.Path, pollMethod):
+		o.transport.polled()
+	}
+	return resp, err
+}
+
+// SetHooks задаёт наблюдателей за опросом и ошибками Telegram API.
+//
+// Отдельно от конструктора потому, что наблюдатели сами зависят от
+// транспорта: тревоги уходят тем же ботом, а служебный сервер поднимается
+// после него. Ставятся они до Run, а вызываются только во время него.
+func (t *Transport) SetHooks(onPoll func(), onAPIError func(err error)) {
+	t.onPoll.Store(&onPoll)
+	t.onAPIError.Store(&onAPIError)
+}
+
+func (t *Transport) polled() {
+	if hook := t.onPoll.Load(); hook != nil && *hook != nil {
+		(*hook)()
+	}
+}
+
+func (t *Transport) apiFailed(err error) {
+	if hook := t.onAPIError.Load(); hook != nil && *hook != nil {
+		(*hook)(err)
+	}
 }

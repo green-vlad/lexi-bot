@@ -167,14 +167,11 @@ jobs:
       - run: go tool govulncheck ./...
 
   image:
-    needs: [lint, test, vuln]
-    if: github.ref == 'refs/heads/main'
+    needs: [lint, test, vuln, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -190,14 +187,28 @@ jobs:
           tags: |
             type=sha,format=long
             type=raw,value=latest
+      # Сначала сборка в локальный демон: образ нужно взвесить до публикации.
       - uses: docker/build-push-action@v6
-        id: build
         with:
-          push: true
+          context: .
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Размер образа
+        run: |
+          size=$(docker image inspect ghcr.io/${{ github.repository }}:latest --format '{{.Size}}')
+          [ "$size" -le "$IMAGE_MAX_BYTES" ] || { echo "образ вырос за бюджет: $size" >&2; exit 1; }
+      # Второй вызов целиком попадает в кеш от первого.
+      - uses: docker/build-push-action@v6
+        if: github.ref == 'refs/heads/main'
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
 
   deploy:
     needs: image
@@ -247,8 +258,34 @@ jobs:
   testcontainer. Это правка в T-013.
 * **Проверка `/healthz` после деплоя** превращает «workflow зелёный» в «бот реально работает».
   Без неё упавший при старте контейнер выглядит как успешный деплой.
-* **Гейт на ветку.** `lint`/`test`/`vuln` идут на каждый PR, `image`/`deploy` — только с `main`.
+* **Гейт на ветку.** `lint`/`test`/`vuln` идут на каждый PR, `deploy` — только с `main`.
+  Образ собирается тоже на каждом PR (сломанный `Dockerfile` должен падать до мержа,
+  а не после), но публикуется в GHCR и уезжает на прод только с `main`.
   На `main` стоит включить branch protection с обязательными проверками.
+
+### Образ
+
+`Dockerfile` двухстадийный: тулчейн Go остаётся в стадии сборки, в образ едет только
+результат. Решения, которые стоит помнить:
+
+* **`CGO_ENABLED=0`.** Статический бинарник ничего не требует от базового образа —
+  ни libc, ни динамического загрузчика. Именно это позволяет взять distroless static.
+* **`gcr.io/distroless/static-debian12:nonroot`.** Ни шелла, ни пакетного менеджера:
+  в контейнер, куда нечем зайти, незачем и лезть. Из полезного там ровно то, что нужно
+  боту, — корневые сертификаты для HTTPS к Bot API. База таймзон не нужна, она вшита
+  в бинарник (`import _ "time/tzdata"`), как и словари, переводы и миграции.
+* **Два бинарника, `bot` и `seeder`.** Словари загружаются на каждом выкате отдельным
+  запуском того же образа (`docker compose run --rm seeder`); отдельная сборка ради
+  десяти мегабайт была бы лишней сущностью.
+* **`HTTP_ADDR=0.0.0.0:8080` в образе.** Значение по умолчанию (`127.0.0.1:8080`)
+  внутри контейнера означает «недоступен вообще»: loopback у контейнера свой. Наружу
+  порт открывает не образ, а публикация в compose — и только на `127.0.0.1` хоста.
+* **Бюджет размера — 30 МБ**, около 28 из них уже заняты. Гейт стоит и в CI
+  (`IMAGE_MAX_BYTES`), и локально (`task image:size`): распухший образ — верный признак,
+  что в сборку заехало что-то лишнее, и заметить это лучше до публикации.
+
+Кеш сборки — `type=gha`, `mode=max` (сохраняются и промежуточные слои). Пока `go.mod`
+и `go.sum` не менялись, модули в CI не выкачиваются заново.
 
 ### Taskfile и CI
 

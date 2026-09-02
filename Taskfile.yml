@@ -10,6 +10,11 @@ vars:
   # Миграциями управляет собственная команда: goose подключён библиотекой,
   # его CLI притащил бы драйверы sqlite и clickhouse, которые проекту не нужны.
   MIGRATE: go run ./cmd/migrate
+  # Локальный тег образа. В реестре теги другие: sha-<полный SHA> и latest,
+  # их проставляет CI.
+  IMAGE: lexi-bot:dev
+  # Тот же бюджет, что и в CI (IMAGE_MAX_BYTES в ci.yml).
+  IMAGE_MAX_BYTES: 30000000
   # golangci-lint не добавлен в go.mod намеренно: его дерево зависимостей больше,
   # чем всё остальное приложение. Версия закреплена здесь и в CI.
   LINT_VERSION: v2.12.2
@@ -109,6 +114,27 @@ tasks:
     cmds:
       - gofmt -w .
       - go mod tidy
+
+  # ---------- образ ----------
+
+  image:
+    desc: Собрать docker-образ
+    cmds:
+      - docker build -t {{.IMAGE}} .
+
+  image:size:
+    desc: Проверить, что образ укладывается в бюджет размера
+    deps: [image]
+    cmds:
+      # Тот же гейт, что и в CI: узнавать о раздувшемся образе после мержа
+      # в main поздно — на VPS он приедет уже следующим деплоем.
+      - |
+        size=$(docker image inspect {{.IMAGE}} --format '{{`{{.Size}}`}}')
+        echo "размер образа: $size байт, предел {{.IMAGE_MAX_BYTES}}"
+        if [ "$size" -gt "{{.IMAGE_MAX_BYTES}}" ]; then
+          echo "образ вырос за бюджет" >&2
+          exit 1
+        fi
 
   # ---------- проверки ----------
 

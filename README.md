@@ -47,6 +47,8 @@ task lint             # golangci-lint
 task test             # юнит-тесты, Docker не нужен
 task test:integration # интеграционные тесты (поднимут контейнер с Postgres)
 task ci               # всё то же, что прогоняет GitHub Actions
+task image            # собрать docker-образ
+task image:size       # и проверить, что он укладывается в бюджет (30 МБ)
 ```
 
 ## Структура
@@ -61,6 +63,7 @@ internal/infra   конфигурация, логи, пул БД, планиро
 migrations       SQL-миграции (goose)
 locales          переводы интерфейса
 seeds            встроенные словари
+Dockerfile       образ для прода: distroless, статическая сборка, non-root
 ```
 
 Правило зависимостей: `adapter`/`infra` → `usecase` → `domain`. Обратных стрелок нет.

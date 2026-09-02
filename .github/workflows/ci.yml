@@ -11,6 +11,9 @@ concurrency:
 
 env:
   LINT_VERSION: v2.12.2
+  # Бюджет размера образа из T-050. Держится distroless-базой и статической
+  # сборкой; гейт ниже не даёт ему тихо расползтись.
+  IMAGE_MAX_BYTES: 30000000
 
 jobs:
   lint:
@@ -130,3 +133,69 @@ jobs:
           cache: true
 
       - run: go build -trimpath -ldflags="-s -w" -o bin/lexi-bot ./cmd/bot
+
+  image:
+    name: Образ
+    # Собирается на каждом PR, публикуется только с main: в реестре не должно
+    # оказаться тега от ветки с красными тестами, но и узнавать о сломанном
+    # Dockerfile уже после мержа не хочется.
+    needs: [lint, test, vuln, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Логин нужен только для публикации; на PR шаг пропускается.
+      - uses: docker/login-action@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # sha-<полный SHA> — то, чем откатывается релиз: тег однозначно
+          # указывает на коммит. latest нужен только compose-файлу на VPS.
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+
+      # Сборка в локальный демон, без публикации: образ нужно взвесить до того,
+      # как он уедет в реестр. Второй вызов ниже целиком попадает в кеш.
+      - name: Сборка
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Размер образа
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:latest
+        run: |
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          echo "размер образа: $size байт, предел $IMAGE_MAX_BYTES"
+          if [ "$size" -gt "$IMAGE_MAX_BYTES" ]; then
+            echo "образ вырос за бюджет: distroless и статическая сборка перестали окупаться" >&2
+            exit 1
+          fi
+
+      - name: Публикация в GHCR
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

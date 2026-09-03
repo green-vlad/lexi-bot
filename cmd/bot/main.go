@@ -125,7 +125,22 @@ func run() error {
 
 	transport.SetHooks(service.PollSucceeded, alerter.APIFailed)
 
-	handler, err := router(transport, catalog, pool, &cfg, log, registry, alerter)
+	// Джиттер интервалов — не криптография: он лишь разводит карточки,
+	// введённые в один день, чтобы они не возвращались все разом.
+	// Предсказуемость этого разброса ничем не грозит.
+	jitter := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) //nolint:gosec // разброс интервалов, а не секреты
+
+	handler, err := router(&wiring{
+		transport: transport,
+		catalog:   catalog,
+		pool:      pool,
+		cfg:       &cfg,
+		log:       log,
+		registry:  registry,
+		alerter:   alerter,
+		clock:     port.ClockFunc(time.Now),
+		rand:      jitter,
+	})
 	if err != nil {
 		return err
 	}
@@ -231,6 +246,25 @@ func background(
 	return jobs, limiter.Stop, nil
 }
 
+// wiring — всё, из чего собирается граф зависимостей роутера.
+//
+// Структура вместо длинного списка параметров нужна не только ради читаемости:
+// часы и источник случайности вынесены наружу ради сквозного теста. Он
+// прогоняет занятие на управляемых часах — иначе карточку, которую SM-2
+// отложил на минуту, пришлось бы ждать минуту по-настоящему.
+type wiring struct {
+	transport *telegram.Transport
+	catalog   port.Catalog
+	pool      *pgxpool.Pool
+	cfg       *config.Config
+	log       *slog.Logger
+	registry  *metrics.Registry
+	alerter   *telegram.Alerter
+	clock     port.Clock
+	// rand разводит интервалы повторений и перемешивает варианты ответа.
+	rand *rand.Rand
+}
+
 // router собирает маршруты и общий для них конвейер middleware.
 //
 // Порядок middleware существенен. Снаружи — восстановление после паники:
@@ -238,10 +272,10 @@ func background(
 // логирование, чтобы в лог попал и апдейт, обработка которого сорвалась
 // на определении пользователя. Затем определение пользователя, и только
 // после него локализация — язык интерфейса известен из его настроек.
-func router(
-	transport *telegram.Transport, catalog port.Catalog, pool *pgxpool.Pool,
-	cfg *config.Config, log *slog.Logger, registry *metrics.Registry, alerter *telegram.Alerter,
-) (port.UpdateHandler, error) {
+func router(w *wiring) (port.UpdateHandler, error) {
+	transport, catalog, pool := w.transport, w.catalog, w.pool
+	cfg, log := w.cfg, w.log
+	jitter, clock := w.rand, w.clock
 	// Репозитории заводятся по одному разу и раздаются сценариям: каждый
 	// из них — тонкая обёртка над пулом, но два экземпляра одного и того же
 	// в графе зависимостей только сбивают с толку.
@@ -253,7 +287,11 @@ func router(
 	dialogs, err := telegram.NewDialogs(&telegram.DialogsConfig{
 		Sessions:  storage.NewSessionRepo(pool),
 		Messenger: transport,
-		Logger:    log,
+		// Часы те же, что у сценариев: движок по ним решает, что диалог
+		// брошен, и разъехавшееся время означало бы, что одна часть
+		// приложения живёт в другом дне, чем остальные.
+		Clock:  clock,
+		Logger: log,
 	})
 	if err != nil {
 		return nil, err
@@ -277,8 +315,8 @@ func router(
 
 	r := telegram.NewRouter()
 	r.Use(
-		telegram.Recover(transport, catalog, log, alerter),
-		telegram.Measure(registry),
+		telegram.Recover(transport, catalog, log, w.alerter),
+		telegram.Measure(w.registry),
 		telegram.Logging(log),
 		telegram.AnswerCallbacks(transport, log),
 		telegram.Identify(users, log),
@@ -291,17 +329,10 @@ func router(
 		return nil, err
 	}
 
-	// Джиттер интервалов — не криптография: он лишь разводит карточки,
-	// введённые в один день, чтобы они не возвращались все разом.
-	// Предсказуемость этого разброса ничем не грозит.
-	jitter := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)) //nolint:gosec // разброс интервалов, а не секреты
-
 	sm2, err := study.NewSM2(study.DefaultSM2Config(), jitter)
 	if err != nil {
 		return nil, err
 	}
-
-	clock := port.ClockFunc(time.Now)
 
 	courseService, err := courses.New(courses.Deps{
 		Users:   users,

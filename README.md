@@ -63,6 +63,7 @@ internal/infra   конфигурация, логи, пул БД, планиро
 migrations       SQL-миграции (goose)
 locales          переводы интерфейса
 seeds            встроенные словари
+test             стенды интеграционных тестов: Postgres и фейковый Bot API
 Dockerfile       образ для прода: distroless, статическая сборка, non-root
 ```
 

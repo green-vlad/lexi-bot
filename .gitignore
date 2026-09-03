@@ -1,6 +1,9 @@
-# Секреты и локальное окружение
+# Секреты и локальное окружение. Образцы (.env.example, .env.prod.example)
+# в репозитории нужны — под шаблон не попадают.
 .env
-.env.local
+.env.*
+!.env.example
+!.env.prod.example
 
 # Сборка
 /bin/

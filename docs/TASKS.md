@@ -266,8 +266,8 @@
   **DoD:** образ < 30 МБ, запускается из чистого окружения, в CI собирается за разумное время на кеше.
 
 - [ ] **T-051. Подготовка VPS**
-  Hetzner CX22 (или аналог), пользователь `deploy` в группе `docker`, `ufw` только на 22/tcp, unattended-upgrades, `/opt/lexi-bot` с `docker-compose.prod.yml` и `.env` (права `600`), ротация docker-логов (`max-size: 10m`, `max-file: 3`). Порт Postgres наружу не публикуется.
-  **DoD:** бот поднят вручную одной командой и отвечает в Telegram; `nmap` снаружи видит только SSH.
+  Hetzner CX22 (или аналог), пользователь `deploy` в группе `docker`, `ufw` только на 22/tcp, unattended-upgrades, `/opt/lexi-bot` с `docker-compose.prod.yml` и `.env` (права `600`), ротация docker-логов (`max-size: 10m`, `max-file: 3`). Порт Postgres наружу не публикуется. Настройка машины собрана в идемпотентный `deploy/provision.sh`, процедура — в [DEPLOY.md §3](./DEPLOY.md#подготовка-сервера); руками остаются только секреты. Локацию выбирают по близости к дата-центру Telegram, а не к себе: пользователь ходит в Telegram напрямую, и «сервер ↔ Bot API» — единственное плечо, на которое мы влияем.
+  **DoD:** бот поднят вручную одной командой и отвечает в Telegram; `nmap` снаружи видит только SSH. **Осталось выполнить на живой машине.**
 
 - [ ] **T-052. Автодеплой**
   Джобы `image` и `deploy` в `ci.yml`: сборка и push в GHCR → SSH на VPS → `docker compose pull && up -d` → ожидание `/healthz`. `concurrency: deploy-production` без отмены, environment `production`, секреты `DEPLOY_HOST/USER/SSH_KEY`.

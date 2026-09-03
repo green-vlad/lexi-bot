@@ -28,3 +28,5 @@ docker/
 .golangci.yml
 Dockerfile
 .dockerignore
+docker-compose.prod.yml
+deploy/

@@ -64,6 +64,7 @@ migrations       SQL-миграции (goose)
 locales          переводы интерфейса
 seeds            встроенные словари
 test             стенды интеграционных тестов: Postgres и фейковый Bot API
+deploy           подготовка сервера: provision.sh
 Dockerfile       образ для прода: distroless, статическая сборка, non-root
 ```
 
